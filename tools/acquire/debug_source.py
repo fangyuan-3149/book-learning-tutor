@@ -25,35 +25,10 @@ ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 
 from source_engine import SourceEngine, load_sources
-from fetcher import Fetcher
 from rule_trace import RuleTrace, set_tracer
+from selftest import LocalFetcher  # 复用同一份 fixture 抓取替身，避免两处定义漂移
 
 FIX = ROOT / "tests" / "fixtures"
-
-
-class LocalFetcher(Fetcher):
-    """把 URL 映射到本地 fixture，不发真实请求（--local 时使用）。"""
-
-    def __init__(self):
-        self.timeout = 20
-        self.proxy = None
-        self.delay = 0
-        self.session = None
-
-    def parse_header(self, s):
-        return {}
-
-    def get(self, url, headers=None):
-        u = url
-        if "search" in u:
-            return (FIX / "search.html").read_text(encoding="utf-8")
-        if u.rstrip("/").endswith("/book/1"):
-            return (FIX / "book_1.html").read_text(encoding="utf-8")
-        if u.rstrip("/").endswith("ch1"):
-            return (FIX / "chapter_1.html").read_text(encoding="utf-8")
-        if u.rstrip("/").endswith("ch2"):
-            return (FIX / "chapter_2.html").read_text(encoding="utf-8")
-        raise FileNotFoundError(f"未映射的本地 URL: {u}")
 
 
 def run(source_path, index=0, keyword="", stage="search", local=False, show_input=False):

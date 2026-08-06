@@ -15,7 +15,6 @@
     toc   = eng.get_toc(info.get("tocUrl") or books[0]["bookUrl"])
     txt   = eng.get_content(toc[0]["chapterUrl"])
 """
-import os
 import re
 import json
 import time
@@ -23,9 +22,10 @@ import urllib.parse
 from pathlib import Path
 
 from fetcher import Fetcher
-from rules import parse_object, evaluate, set_js_bridge
+from rules import parse_object, set_js_bridge
 from transforms import apply_java, TRANSFORMS  # JS桥源转纯L1：内容解密钩子（无浏览器、无外部key）
 from js_bridge import JsBridge  # 纯 L1：在 Node 里求 @js:/{{java.*}} 片段（无浏览器、无外部key）
+from url_option import UrlOption, BrowserRequired  # B-01：URL+option 统一解析，四大动作共用
 
 ROOT = Path(__file__).resolve().parent.parent.parent  # E:\授业
 DEBUG_DIR = ROOT / "data" / "debug"
@@ -116,6 +116,18 @@ class SourceEngine:
             url = self.base + url
         return url
 
+    # ---- 统一请求入口（B-01）：四大动作共用，站点差异只留在书源 JSON ----
+    def _request(self, raw_url, keyword="", page=1):
+        """解析 `<url>,{option}` → 展开 {{...}} → 执行 JS 钩子 → 发请求。
+
+        返回 (最终URL, 响应文本)。webView 类源在此明确抛 BrowserRequired，不假成功。
+        """
+        opt = UrlOption.parse(raw_url)
+        opt = opt.expanded(lambda s: self._expand_url(s, keyword, page))
+        if opt.js or opt.body_js:
+            opt = opt.apply_js(self.js)
+        return opt.fetch(self.f, self.base, default_headers=self.headers)
+
     # ---- 解密钩子（JS桥源转纯L1）----
     def _apply_decrypt(self, text, stage):
         """若源带 rule{Stage}Decrypt，对抓取文本解密后再解析。
@@ -152,57 +164,15 @@ class SourceEngine:
         return recs
 
     def _search_fetch(self, tmpl, keyword, page):
-        """构造并执行搜索请求。支持两种格式：
-        - 普通 URL（GET，{{key}}/{{page}}/{{java.*}} 占位）
-        - Legado POST 搜索：`url,{ "method":"POST", "body":"...{{key}}...", "charset":"GBK" }`
-        searchUrl 整体可为 {{java.ajax(url)}}（直接返回内容，不再二次请求）。
-        """
-        # 尝试解析 POST 搜索格式：url 逗号后接一个 JSON 对象
-        m = re.match(r"^\s*(\S+?)\s*,\s*(\{.*\})\s*$", tmpl, re.S)
-        if m:
-            url = m.group(1)
-            if not url.startswith("http"):
-                url = self.base + url
-            try:
-                spec = json.loads(m.group(2))
-            except Exception:
-                spec = {}
-            method = str(spec.get("method", "POST")).upper()
-            body = spec.get("body", "")
-            charset = spec.get("charset")
-            body = self._expand_url(body, keyword, page)
-            if method == "POST":
-                data = body.encode(charset) if charset else body
-                hdrs = dict(self.headers)
-                hdrs.setdefault("Content-Type", "application/x-www-form-urlencoded")
-                return url, self.f.post(url, hdrs, data=data)
-            else:
-                sep = "&" if "?" in url else "?"
-                return url, self.f.get(url + sep + body)
-        expanded = self._expand_url(tmpl, keyword, page)
-        if expanded.startswith(("http://", "https://")):
-            return expanded, self.f.get(expanded, self.headers)
-        if not self._looks_like_content(expanded):
-            # 相对路径 searchUrl（如 /search?key=xxx）：拼站点根后请求
-            url = self.base + ("" if expanded.startswith("/") else "/") + expanded
-            return url, self.f.get(url, self.headers)
-        # 整体为 {{java.ajax(...)}} 之类：Java 桥已把响应内容内联，无需二次请求
-        return tmpl, expanded
+        """构造并执行搜索请求，全部委托给统一的 UrlOption（B-01）。
 
-    @staticmethod
-    def _looks_like_content(s):
-        """区分「展开结果是响应正文」还是「展开结果是一个 URL(路径)」。
-
-        java.ajax 会把整段 HTML/JSON 正文内联到 searchUrl 位置，此时不能再发请求；
-        而 `/search?key=xx` 这类相对路径必须拼站点根后请求。正文的判据：
-        以 < { [ 开头、含换行、或长度明显超出 URL 量级。
+        自动覆盖：普通 GET、`url,{"method":"POST","body":...,"charset":...}`、
+        `{{java.ajax(...)}}` 整体内联（不再二次请求）、相对路径拼站点根。
         """
-        t = s.lstrip()
-        return t.startswith(("<", "{", "[")) or "\n" in s or len(s) > 2048
+        return self._request(tmpl, keyword, page)
 
     def get_book_info(self, book_url):
-        url = book_url if book_url.startswith("http") else self.base + book_url
-        text = self.f.get(url, self.headers)
+        url, text = self._request(book_url)
         self._save_debug("bookinfo", url, text)
         text = self._apply_decrypt(text, "BookInfo")
         _, root = _parse_response(text)
@@ -214,8 +184,7 @@ class SourceEngine:
         return info
 
     def get_toc(self, book_url):
-        url = book_url if book_url.startswith("http") else self.base + book_url
-        text = self.f.get(url, self.headers)
+        url, text = self._request(book_url)
         self._save_debug("toc", url, text)
         text = self._apply_decrypt(text, "Toc")
         _, root = _parse_response(text)
@@ -228,8 +197,7 @@ class SourceEngine:
         return recs
 
     def get_content(self, chapter_url):
-        url = chapter_url if chapter_url.startswith("http") else self.base + chapter_url
-        text = self.f.get(url, self.headers)
+        url, text = self._request(chapter_url)
         self._save_debug("content", url, text)
         text = self._apply_decrypt(text, "Content")
         _, root = _parse_response(text)
@@ -259,6 +227,10 @@ class SourceEngine:
                 continue
             try:
                 body = self.get_content(curl)
+            except BrowserRequired as e:
+                # 该源正文动作要求 webView（L3 越界）：整本都不可能成功，早停而非逐章失败
+                return {"name": name, "dir": str(self.book_dir), "chapters": len(written),
+                        "aborted": "browser_required", "detail": str(e)}
             except Exception as e:
                 body = f"[ERROR] {e}"
             fn = f"{i:04d}_{_safe(ch.get('chapterName', f'第{i}章'))}.txt"

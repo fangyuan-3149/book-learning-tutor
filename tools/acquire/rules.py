@@ -71,42 +71,153 @@ def sniff(rule):
     return "css"
 
 
-# ---------- JSONPath 极简 $.a.b / $.a[0].b ----------
+# ---------- JSONPath（吸收台账 B-26，对齐 K1 所用 jayway JsonPath 常用子集）----------
+# 支持：$ 根 / .key / ['key'] / [n] / [-n] / [*] / [a:b:c] 切片 /
+#       [1,2] 索引并集 / ['a','b'] 键并集 / ..key 递归下降 / ..* 全递归
+# 不支持（真实书源极少用，且会引入依赖）：过滤表达式 [?(...)]、脚本表达式
+def _jp_tokens(path):
+    p = (path or "").strip()
+    if p.startswith("@Json:"):
+        p = p[len("@Json:"):].strip()
+    if p.startswith("$"):
+        p = p[1:]
+    toks, i, n = [], 0, len(p)
+    while i < n:
+        c = p[i]
+        if c == ".":
+            if i + 1 < n and p[i + 1] == ".":          # .. 递归下降
+                i += 2
+                j = i
+                while j < n and (p[j].isalnum() or p[j] in "_-*"):
+                    j += 1
+                name = p[i:j]
+                toks.append(("recurse", None if name in ("", "*") else name))
+                i = j
+                continue
+            i += 1
+            continue
+        if c == "[":
+            j = p.find("]", i)
+            if j < 0:
+                break
+            inner, i = p[i + 1:j].strip(), j + 1
+            if inner == "*":
+                toks.append(("wild",))
+            elif inner[:1] in ("'", '"'):
+                names = [s.strip().strip("'\"") for s in inner.split(",")]
+                toks.append(("union_key", names) if len(names) > 1 else ("key", names[0]))
+            elif ":" in inner:
+                parts = (inner.split(":") + ["", ""])[:3]
+                toks.append(("slice",
+                             int(parts[0]) if parts[0].strip() else None,
+                             int(parts[1]) if parts[1].strip() else None,
+                             int(parts[2]) if parts[2].strip() else None))
+            elif "," in inner:
+                try:
+                    toks.append(("union_idx", [int(x) for x in inner.split(",")]))
+                except ValueError:
+                    toks.append(("union_key", [x.strip() for x in inner.split(",")]))
+            else:
+                try:
+                    toks.append(("index", int(inner)))
+                except ValueError:
+                    toks.append(("key", inner))
+            continue
+        j = i
+        while j < n and p[j] not in ".[":
+            j += 1
+        name = p[i:j]
+        if name == "*":
+            toks.append(("wild",))
+        elif name:
+            toks.append(("key", name))
+        i = j
+    return toks
+
+
+def _jp_descend(node, name):
+    """递归下降：收集所有层级中键为 name 的值；name 为 None 时收集所有值。"""
+    out, stack = [], [node]
+    while stack:
+        cur = stack.pop(0)
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                if name is None or k == name:
+                    out.append(v)
+                stack.append(v)
+        elif isinstance(cur, list):
+            for v in cur:
+                if name is None:
+                    out.append(v)
+                stack.append(v)
+    return out
+
+
+def json_query(obj, path):
+    """执行 JSONPath，永远返回 list（0/1/N 项），任何异常都降级为 []。"""
+    if isinstance(obj, str):
+        try:
+            obj = json.loads(obj)
+        except Exception:
+            return []
+    cur = [obj]
+    for t in _jp_tokens(path):
+        op, nxt = t[0], []
+        for node in cur:
+            if op == "key":
+                k = t[1]
+                if isinstance(node, dict):
+                    if k in node:
+                        nxt.append(node[k])
+                elif isinstance(node, list):
+                    # jayway 语义：对数组取键 = 逐元素取键
+                    for e in node:
+                        if isinstance(e, dict) and k in e:
+                            nxt.append(e[k])
+            elif op == "index":
+                if isinstance(node, list) and -len(node) <= t[1] < len(node):
+                    nxt.append(node[t[1]])
+            elif op == "wild":
+                if isinstance(node, list):
+                    nxt.extend(node)
+                elif isinstance(node, dict):
+                    nxt.extend(node.values())
+            elif op == "slice":
+                if isinstance(node, list):
+                    nxt.extend(node[slice(t[1], t[2], t[3])])
+            elif op == "union_idx":
+                if isinstance(node, list):
+                    for i in t[1]:
+                        if -len(node) <= i < len(node):
+                            nxt.append(node[i])
+            elif op == "union_key":
+                if isinstance(node, dict):
+                    for k in t[1]:
+                        if k in node:
+                            nxt.append(node[k])
+            elif op == "recurse":
+                nxt.extend(_jp_descend(node, t[1]))
+        cur = nxt
+        if not cur:
+            break
+    return cur
+
+
 def jsonpath_single(obj, rule):
     """返回单个标量字符串（用于 URL 插值）；规则形如 a.b[0].c。"""
-    if isinstance(obj, str):
-        obj = json.loads(obj)
-    cur = obj
-    try:
-        for tok in re.findall(r"\$?\.?([^.\[\]]+)|\[(\d+)\]", rule):
-            key, idx = tok
-            if key:
-                cur = cur[key]
-            if idx != "":
-                cur = cur[int(idx)]
-    except Exception:
+    res = json_query(obj, rule)
+    if not res:
         return ""
-    return str(cur) if cur is not None else ""
+    v = res[0]
+    return "" if v is None else str(v)
 
 
 def eval_json(obj, rule):
-    if rule.startswith("@Json:"):
-        rule = rule[len("@Json:"):]
-    if isinstance(obj, str):
-        obj = json.loads(obj)
-    cur = obj
-    try:
-        for tok in re.findall(r"\$?\.?([^.\[\]]+)|\[(\d+)\]", rule):
-            key, idx = tok
-            if key:
-                cur = cur[key]
-            if idx != "":
-                cur = cur[int(idx)]
-    except Exception:
-        return []
-    if isinstance(cur, list):
-        return list(cur)
-    return [cur]
+    res = json_query(obj, rule)
+    # `$.data` 指向一个数组时，语义是「迭代该数组」而非「得到一个数组元素」
+    if len(res) == 1 and isinstance(res[0], list):
+        return list(res[0])
+    return res
 
 
 # ---------- XPath ----------

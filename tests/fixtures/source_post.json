@@ -1,0 +1,26 @@
+{
+  "bookSourceName": "本地自测源-POST",
+  "bookSourceUrl": "http://local.test",
+  "bookSourceType": 0,
+  "searchUrl": "/api/search,{\"method\":\"POST\",\"body\":\"kw={{key}}&page={{page}}\",\"charset\":\"utf-8\",\"headers\":{\"X-Test\":\"1\"},\"retry\":2}",
+  "ruleSearch": {
+    "bookList": "$.data[*]",
+    "name": "$.title",
+    "author": "$.by",
+    "bookUrl": "/book/{{$.id}}"
+  },
+  "ruleBookInfo": {
+    "name": "//h1[@class='book-title']/text()",
+    "author": "class.author@text",
+    "intro": "class.intro@text"
+  },
+  "ruleToc": {
+    "chapterList": "class.module-row-text",
+    "chapterName": "tag.a.0@text",
+    "chapterUrl": "tag.a.0@href"
+  },
+  "ruleContent": {
+    "content": "class.article-content.0@html##（本章完）"
+  },
+  "header": ""
+}
