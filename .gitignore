@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# 数据与产物（代码入库，书库数据不入库）
+书库/
+data/
+参考/
+预处理/
+*.log
+
+# 工具/记忆
+.workbuddy/
+tools_dev/
+
+# 临时
+tmp/
+*.bak
+
+# 密钥（不入库）
+config/backends.json
+
+# 参考项目（克隆的开源阅读续作源码，仅作参考，不入库）
+开源阅读/
+
+# 备份目录（本地快照，不入库）
+_backup_*/
+
+# 备份目录（本地快照，不入库）
+_backup_*/

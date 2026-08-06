@@ -1,0 +1,7 @@
+# 授业 · 获取引擎运行时依赖（tools/acquire）
+# 安装：venv/Scripts/python -m pip install -r tools/acquire/requirements.txt
+httpx>=0.27          # L1 抓取层（HTTP/2 可选、UA 池、cookie 会话、POST 三形式、鲁棒解码）
+beautifulsoup4>=4.12 # HTML 解析（rules.py 默认解析器）
+lxml>=5.0            # XPath 规则支持（rules.py eval_xpath）
+pycryptodome>=3.20   # JS桥源转纯L1：复刻规则里的 java.* AES/DES/base64/md5 加解密·签名
+PyExecJS>=1.5.1       # @js:/{{java.*}} 片段求值桥（后端用本机 Node，无浏览器、无外部key）
