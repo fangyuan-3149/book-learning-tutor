@@ -3,10 +3,12 @@
 Step 1 搜索： load_sources → 多源并发 searchBook → 聚合结果（模型可读）
 Step 2 下载： 选一条结果 → 逐章 getContent → 参考/<书名>/
 Step 3 转md： 参考/<书名>/ → 正文净化 → 预处理/<书名>.md
+格式层 ingest： 本地 PDF/EPUB/DJVU/TXT/MD → 参考/<书名>/NNNN_title.txt（补"只能翻txt"短板）
 
 CLI：
     python pipeline.py search  <书名> [--idx 15]      # Step1：搜书，打印+缓存结果
     python pipeline.py download <bookUrl> <源名> [书名] # Step2：下载原书到 参考/
+    python pipeline.py ingest <文件或目录> [--name 书名] # 格式层：本地书 → 参考/
     python pipeline.py convert <书名>                 # Step3：参考/ → 预处理/<书名>.md
     python pipeline.py all <书名> [--idx 15]           # 串联：搜→下→md（M4 验证）
 
@@ -23,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from bs4 import BeautifulSoup
 from source_engine import SourceEngine, load_sources, _safe, REF_DIR, write_robust
+from book_formats import extract as extract_book  # 格式层：PDF/EPUB/DJVU/TXT/MD → 章节
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SOURCES_DIR = ROOT / "data" / "sources"
@@ -112,6 +115,63 @@ def convert(book_name):
     return str(out), len(parts)
 
 
+# 目录模式下只认这些"真书"格式，避免把项目里的 .md/.txt/venv 误吸进 参考/
+_BOOK_EXTS = {".pdf", ".epub", ".djvu", ".mobi"}
+# 目录递归时跳过的噪声目录（含 venv / 仓库元数据 / 产物目录）
+_SKIP_DIRS = {"venv", ".venv", ".git", "node_modules", "data", "参考", "预处理",
+              "书库", ".workbuddy", "__pycache__"}
+
+
+def ingest(path, book_name=None):
+    """格式层入口：本地书籍文件/目录 → 参考/<书名>/NNNN_title.txt。
+
+    path 为文件：整本作为一本书（书名=--name 或文件名）。
+    path 为目录：目录下（含子目录，跳过 venv/.git/产物等噪声目录）每个
+                 pdf/epub/djvu/mobi 各作为一本书（书名=文件名）。
+    抽出的章节直接落 参考/<书名>/，下游 convert → course_gen 零改动消费。
+    """
+    p = Path(path)
+    if not p.exists():
+        raise SystemExit(f"路径不存在：{path}")
+    if p.is_file():
+        files = [p]
+    else:
+        files = sorted(
+            f for f in p.rglob("*")
+            if f.is_file() and f.suffix.lower() in _BOOK_EXTS
+            and not any(part in _SKIP_DIRS for part in f.parts))
+    if not files:
+        raise SystemExit(f"未找到可抽取的书文件（pdf/epub/djvu/mobi）：{path}")
+    total_sec = 0
+    for f in files:
+        name = book_name or (p.stem if p.is_file() else f.stem)
+        try:
+            r = extract_book(str(f))
+        except Exception as e:
+            print(f"[warn] 跳过 {f.name}：{e}")
+            continue
+        out_dir = REF_DIR / _safe(name)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for i, (title, text) in enumerate(r["sections"], 1):
+            fn = out_dir / f"{i:04d}_{_safe(title)[:40]}.txt"
+            write_robust(fn, text, label="参考")
+        # 顺手写 _meta.json，convert 会读 name/author/source
+        meta = dict(r.get("meta", {}))
+        meta.update({"name": name, "chapterCount": len(r["sections"]),
+                     "format": r["fmt"], "needsOcr": r["needs_ocr"]})
+        write_robust(out_dir / "_meta.json", json.dumps(meta, ensure_ascii=False, indent=2), label="参考")
+        flag = " [⚠ 疑似扫描版，需OCR]" if r["needs_ocr"] else ""
+        print(f"[ingest] {f.name} → 参考/{_safe(name)}/ （{len(r['sections'])} 节，{r['fmt']}）{flag}")
+        total_sec += len(r["sections"])
+    print(f"[ingest] 完成，共 {total_sec} 节。下一步：python pipeline.py convert {book_name or '<书名>'}")
+
+
+
+def detect_format_local(f):
+    from book_formats import detect_format
+    return detect_format(str(f))
+
+
 def html_to_text(html):
     """极简 HTML→纯文本（保留段落）。v1 够用；后续可换 html2text。"""
     if not html or "<" not in html:
@@ -131,6 +191,7 @@ def main():
     ps = sub.add_parser("search"); ps.add_argument("kw"); ps.add_argument("--idx", type=int, nargs="*")
     pd = sub.add_parser("download"); pd.add_argument("url"); pd.add_argument("source"); pd.add_argument("name", nargs="?"); pd.add_argument("--max", type=int, default=None)
     pc = sub.add_parser("convert"); pc.add_argument("name")
+    pi = sub.add_parser("ingest"); pi.add_argument("path"); pi.add_argument("--name", default=None)
     pa = sub.add_parser("all"); pa.add_argument("kw"); pa.add_argument("--idx", type=int, nargs="*"); pa.add_argument("--max", type=int, default=None)
     args = ap.parse_args()
 
@@ -144,6 +205,8 @@ def main():
     elif args.cmd == "convert":
         out, n = convert(args.name)
         print(f"[转md] {out}（{n} 节）")
+    elif args.cmd == "ingest":
+        ingest(args.path, args.name)
     elif args.cmd == "all":
         res, cache = search_all(args.kw, args.idx)
         ok = [r for r in res if r.get("bookUrl") and not r.get("_error")]

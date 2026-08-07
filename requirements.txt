@@ -1,0 +1,15 @@
+# 授业（Shouye）—— 获取引擎 + 格式层 运行时依赖
+# 安装：venv\Scripts\python.exe -m pip install -r requirements.txt
+# Py3.13 managed runtime。
+
+# ---- 核心（必装，格式层 + 解析引擎）----
+pymupdf==1.28.2          # PDF / EPUB / DJVU 解析主力（book_formats.extract）
+httpx==0.28.1            # 获取层 HTTP 客户端（fetcher，注意 0.28 移除 proxies=）
+beautifulsoup4==4.15.0   # HTML 解析（rules.py 选择器后端）
+lxml==6.1.1              # bs4 的 XPath 解析后端
+
+# ---- 可选（不装也能跑；特定格式 / 站点才需要）----
+# ebooklib>=0.18        # EPUB 后备解析（pymupdf 读不了的 EPUB 启用）
+# 系统需装 djvulibre（djvutxt CLI）才能落 DJVU；pymupdf 轮子大多不含 djvu 解码
+# PyExecJS>=1.5         # @js: / java.* 桥（Node 后端求值；JS 桥源用）
+# curl_cffi>=0.10       # L2-lite TLS 指纹伪装（被动指纹 403 用，待接入 fetcher）
