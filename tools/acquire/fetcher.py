@@ -9,10 +9,16 @@
 - 保留原接口：Fetcher() / get() / post() / parse_header()，与 source_engine.py 兼容。
 """
 import ast
+import json
 import time
 import random
+import threading
+from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
+
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 # ---------- UA 池 ----------
@@ -47,14 +53,120 @@ def parse_header(header_str):
         return {}
 
 
+# ---------- 每域名限流（B-24，配置与书源规则分离）----------
+# 进程内按 host 记录上次请求时刻，请求前按 1/qps 最小间隔节流；可按域名覆盖 QPS。
+# 全局共享一个限流器，保证「同一域名无论被几个引擎并发抓，都礼貌」。
+_DOMAIN_STATE = {}                       # host -> {"lock": Lock, "last": float}
+_DOMAIN_STATE_LOCK = threading.Lock()
+_DEFAULT_RATE_CONFIG = {"default_qps": 1.0, "per_domain": {}}
+
+
+def _host_of(url):
+    try:
+        netloc = urlparse(url).netloc
+        return netloc or "__rel__"
+    except Exception:
+        return "__rel__"
+
+
+def _load_rate_config():
+    """从 config/rate_limit.json 读全局/每域名 QPS（与书源规则分离）。文件缺省用默认。"""
+    p = ROOT / "config" / "rate_limit.json"
+    if p.exists():
+        try:
+            cfg = json.loads(p.read_text(encoding="utf-8"))
+            cfg.setdefault("default_qps", _DEFAULT_RATE_CONFIG["default_qps"])
+            cfg.setdefault("per_domain", {})
+            return cfg
+        except Exception:
+            pass
+    return dict(_DEFAULT_RATE_CONFIG)
+
+
+class RateLimiter:
+    """每域名礼貌爬取：最小请求间隔 = 1/qps；qps<=0 表示不限流。
+
+    clock / sleeper 可注入，便于确定性单测（无需真实 sleep）。
+    """
+
+    def __init__(self, default_qps=1.0, per_domain=None, clock=None, sleeper=None):
+        self.default_qps = default_qps
+        self.per_domain = per_domain or {}
+        self._clock = clock or time.time
+        self._sleep = sleeper or time.sleep
+
+    def interval_for(self, host):
+        qps = self.per_domain.get(host, self.default_qps)
+        return (1.0 / qps) if qps and qps > 0 else 0.0
+
+    def acquire(self, host):
+        iv = self.interval_for(host)
+        if iv <= 0:
+            return
+        with _DOMAIN_STATE_LOCK:
+            st = _DOMAIN_STATE.get(host)
+            if st is None:
+                st = _DOMAIN_STATE[host] = {"lock": threading.Lock(), "last": 0.0}
+        with st["lock"]:
+            now = self._clock()
+            wait = st["last"] + iv - now
+            if wait > 0:
+                self._sleep(min(wait, 5.0))   # 单域名单次最多等 5s，防卡死
+            st["last"] = self._clock()
+
+
+# 全局共享限流器（按需惰性加载配置）
+_GLOBAL_LIMITER = None
+
+
+def get_global_limiter():
+    global _GLOBAL_LIMITER
+    if _GLOBAL_LIMITER is None:
+        cfg = _load_rate_config()
+        _GLOBAL_LIMITER = RateLimiter(cfg["default_qps"], cfg.get("per_domain", {}))
+    return _GLOBAL_LIMITER
+
+
+# ---------- 限流自测（B-24 回归，确定性、不联网）----------
+def selftest():
+    fake = {"t": 1000.0}
+    sleeps = []
+
+    def clock():
+        return fake["t"]
+
+    def sleeper(d):
+        sleeps.append(d)
+        fake["t"] += d
+
+    rl = RateLimiter(default_qps=10.0, clock=clock, sleeper=sleeper)  # 0.1s 间隔
+    rl.acquire("a.com")                       # last=1000
+    rl.acquire("a.com")                       # 需等 0.1s
+    assert abs(sleeps[-1] - 0.1) < 1e-9, sleeps
+    rl.acquire("b.com")                       # 不同域名不等待
+    assert len(sleeps) == 1, sleeps
+    assert abs(rl.interval_for("x") - 0.1) < 1e-9
+    # qps=0 不限流
+    rl0 = RateLimiter(default_qps=0, clock=clock, sleeper=sleeper)
+    rl0.acquire("c.com")
+    rl0.acquire("c.com")
+    assert len(sleeps) == 1, "qps=0 不应节流"
+    # 每域名覆盖
+    rl2 = RateLimiter(default_qps=1.0, per_domain={"fast.com": 20.0}, clock=clock, sleeper=sleeper)
+    assert abs(rl2.interval_for("fast.com") - 0.05) < 1e-9
+    print("fetcher 限流自测通过：每域名 1/qps 节流 + 跨域名不互等 + qps=0 关闭（B-24）")
+    return True
+
+
 class Fetcher:
     def __init__(self, proxy=None, timeout=20, delay=0.0, http2=True, verify=False,
-                 ua_mode="desktop"):
+                 ua_mode="desktop", rate_limiter=None):
         """
         proxy: "http://host:port" 或 None
-        delay: 每个请求后的停顿（秒），用作简易限流
+        delay: 每个请求后的停顿（秒），用作简易限流（与每域名限流并存）
         http2: 是否启用 HTTP/2（h2 包缺失时自动降级，不报错）
         ua_mode: "desktop" / "mobile" 选择 UA 池
+        rate_limiter: 每域名限流器（默认用全局共享实例，配置见 config/rate_limit.json）
         """
         self.timeout = timeout
         self.delay = delay
@@ -76,6 +188,8 @@ class Fetcher:
             "application/json;q=0.8,*/*;q=0.7"
         )
         self.client.headers["Accept-Language"] = "zh-CN,zh;q=0.9,en;q=0.8"
+        # 每域名限流（B-24）：默认共享全局实例，配置与书源规则分离
+        self.limiter = rate_limiter or get_global_limiter()
 
     # ---- cookie 会话 ----
     def set_cookies(self, cookie_str):
@@ -138,6 +252,8 @@ class Fetcher:
         hdrs = dict(headers or {})
         if not any(k.lower() == "user-agent" for k in hdrs):
             hdrs["User-Agent"] = self._rotate_ua()
+        # 每域名礼貌节流（B-24）：请求前按 1/qps 最小间隔等待
+        self.limiter.acquire(_host_of(url))
         last_err = None
         for attempt in range(retries + 1):
             try:
@@ -165,3 +281,7 @@ class Fetcher:
 
     def post(self, url, headers=None, data=None, json_body=None):
         return self.request(url, "POST", headers, data=data, json_body=json_body)
+
+
+if __name__ == "__main__":
+    selftest()
