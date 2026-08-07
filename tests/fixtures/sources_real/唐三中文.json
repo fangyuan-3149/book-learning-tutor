@@ -1,0 +1,43 @@
+{
+  "bookSourceComment": "// Error: timeout",
+  "bookSourceGroup": "小说 书源",
+  "bookSourceName": "唐三中文",
+  "bookSourceType": 0,
+  "bookSourceUrl": "http://www.tangsanshu.org#",
+  "customOrder": 646,
+  "enabled": true,
+  "enabledCookieJar": true,
+  "enabledExplore": true,
+  "lastUpdateTime": 1733687204230,
+  "respondTime": 195031,
+  "ruleBookInfo": {
+    "author": ".small span.0@text",
+    "coverUrl": ".cover img@src",
+    "intro": "[property$=description]@content##(^|[。！？]+[”」）】]?)##$1<br>",
+    "kind": ".small span.1:2:4@text##小说|.*：|\\s.*",
+    "lastChapter": ".last a@text##正文卷.|正文.|VIP卷.|默认卷.|卷_|VIP章节.|免费章节.|章节目录.|最新章节.|[\\(（【].*?[求更票谢乐发订合补加架字修Kk].*?[】）\\)]",
+    "name": ".info h2@text",
+    "wordCount": ".small span.3@text##.*："
+  },
+  "ruleContent": {
+    "content": "#content@html",
+    "replaceRegex": "##http.*//.*|请记住本书首.*"
+  },
+  "ruleExplore": {},
+  "ruleSearch": {
+    "author": ".author@text",
+    "bookList": ".bookbox",
+    "bookUrl": "a.0@href",
+    "coverUrl": "img@src",
+    "kind": ".cat@text##.*：|小说",
+    "lastChapter": ".update a@text##正文卷.|正文.|VIP卷.|默认卷.|卷_|VIP章节.|免费章节.|章节目录.|最新章节.|[\\(（【].*?[求更票谢乐发订合补加架字修Kk].*?[】）\\)]",
+    "name": ".bookname@text"
+  },
+  "ruleToc": {
+    "chapterList": ".listmain dd a",
+    "chapterName": "text##正文卷.|正文.|VIP卷.|默认卷.|卷_|VIP章节.|免费章节.|章节目录.|最新章节.|[\\(（【].*?[求更票谢乐发订合补加架字修Kk].*?[】）\\)]",
+    "chapterUrl": "href"
+  },
+  "searchUrl": "/s.php?ie=utf-8&s=&q={{key}}",
+  "weight": 43
+}

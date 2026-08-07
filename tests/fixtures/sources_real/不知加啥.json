@@ -1,0 +1,50 @@
+{
+  "bookSourceComment": "",
+  "bookSourceGroup": "校验可用",
+  "bookSourceName": "不知加啥",
+  "bookSourceType": 0,
+  "bookSourceUrl": "http://m.rulianshi.la",
+  "customOrder": 1344,
+  "enabled": true,
+  "enabledCookieJar": false,
+  "enabledExplore": true,
+  "lastUpdateTime": 1668172357493,
+  "respondTime": 5235,
+  "ruleBookInfo": {
+    "author": "[property=\"og:novel:author\"]@content",
+    "coverUrl": "[property=\"og:image\"]@content",
+    "intro": "[property=\"og:description\"]@content",
+    "kind": "[property=\"og:novel:category\"]@content",
+    "lastChapter": "[property=\"og:novel:latest_chapter_name\"]@content",
+    "name": "[property=\"og:novel:book_name\"]@content",
+    "tocUrl": "[property=\"og:novel:read_url\"]@content",
+    "wordCount": ""
+  },
+  "ruleContent": {
+    "content": "class.nr_nr@tag.div.1@textNodes",
+    "nextContentUrl": "text.下一页@href",
+    "replaceRegex": "",
+    "sourceRegex": ""
+  },
+  "ruleExplore": {},
+  "ruleReview": {},
+  "ruleSearch": {
+    "author": "p.3@text##作者：",
+    "bookList": "class.block",
+    "bookUrl": "a.0@href",
+    "checkKeyWord": "我的",
+    "coverUrl": "img@src",
+    "kind": "p.2@text##分类：",
+    "lastChapter": "p.4@tag.a@text",
+    "name": "h2@text"
+  },
+  "ruleToc": {
+    "chapterList": "class.cover@tag.ul.1@tag.a",
+    "chapterName": "text",
+    "chapterUrl": "href",
+    "nextTocUrl": "text.下一页@href",
+    "preUpdateJs": ""
+  },
+  "searchUrl": "/s.php?q={{key}}&submit=",
+  "weight": 0
+}

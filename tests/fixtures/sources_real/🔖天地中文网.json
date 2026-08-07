@@ -1,0 +1,47 @@
+{
+  "bookSourceComment": "",
+  "bookSourceGroup": "校验可用",
+  "bookSourceName": "🔖天地中文网",
+  "bookSourceType": 0,
+  "bookSourceUrl": "http://www.tiandizw.com",
+  "customOrder": 703,
+  "enabled": true,
+  "enabledCookieJar": true,
+  "enabledExplore": true,
+  "exploreUrl": "全部::http://www.tiandizw.com/search.php/newindex?Paixu=0&page={{page}}\n玄幻::http://www.tiandizw.com/a2/b0/c0/d0?keyword=?page={{page}}\n奇幻::http://www.tiandizw.com/a3/b0/c0/d0?keyword=?page={{page}}\n武侠::http://www.tiandizw.com/a4/b0/c0/d0?keyword=?page={{page}}\n仙侠::http://www.tiandizw.com/a5/b0/c0/d0?keyword=?page={{page}}\n都市::http://www.tiandizw.com/a6/b0/c0/d0?keyword=?page={{page}}\n历史::http://www.tiandizw.com/a7/b0/c0/d0?keyword=?page={{page}}\n军事::http://www.tiandizw.com/a8/b0/c0/d0?keyword=?page={{page}}\n网游::http://www.tiandizw.com/a9/b0/c0/d0?keyword=?page={{page}}\n竞技::http://www.tiandizw.com/a10/b0/c0/d0?keyword=?page={{page}}\n科幻::http://www.tiandizw.com/a11/b0/c0/d0?keyword=?page={{page}}\n灵异::http://www.tiandizw.com/a12/b0/c0/d0?keyword=?page={{page}}\n同人::http://www.tiandizw.com/a13/b0/c0/d0?keyword=?page={{page}}\n\n\n新书榜::http://www.tiandizw.com/paihang/newbook/book?page={{page}}\n点击榜::http://www.tiandizw.com/paihang/newbook/views?page={{page}}\n订阅榜::http://www.tiandizw.com/paihang/newbook/dingyue?page={{page}}\n打赏榜::http://www.tiandizw.com/paihang/newbook/dashang?page={{page}}\n贡献榜::http://www.tiandizw.com/paihang/newbook/funs?page={{page}}\n字数榜::http://www.tiandizw.com/paihang/newbook/wordtotal?page={{page}}\n完结榜::http://www.tiandizw.com/paihang/newbook/finish?page={{page}}",
+  "lastUpdateTime": 1678671459435,
+  "respondTime": 2621,
+  "ruleBookInfo": {
+    "tocUrl": "text.目录@href"
+  },
+  "ruleContent": {
+    "content": "class.xsDetail@tag.p@textNodes"
+  },
+  "ruleExplore": {
+    "author": "class.content@tag.span.0@tag.a@text",
+    "bookList": "class.list_details@li",
+    "bookUrl": "class.content@h3@tag.a@href",
+    "coverUrl": "tag.a.0@img@src",
+    "intro": "class.intro@text",
+    "lastChapter": "class.details@tag.span@a@text##最新章节",
+    "name": "class.content@h3@tag.a@text",
+    "wordCount": "class.content@tag.span.1@tag.a@text||##最新章节.*"
+  },
+  "ruleSearch": {
+    "author": "class.content@tag.span.0@tag.a@text",
+    "bookList": "class.list_details@li",
+    "bookUrl": "class.content@h3@tag.a@href",
+    "coverUrl": "tag.a.0@img@src",
+    "intro": "class.intro@text",
+    "lastChapter": "class.details@tag.span@a@text##最新章节",
+    "name": "class.content@h3@tag.a@text",
+    "wordCount": "class.content@tag.span.1@tag.a@text||##最新章节.*"
+  },
+  "ruleToc": {
+    "chapterList": "class.mulu_list@li",
+    "chapterName": "tag.a@text##VIP##🔒",
+    "chapterUrl": "tag.a@href"
+  },
+  "searchUrl": "http://www.tiandizw.com/search.php/newindex?keyword={{key}}&Paixu=0&page={{page}}",
+  "weight": 0
+}

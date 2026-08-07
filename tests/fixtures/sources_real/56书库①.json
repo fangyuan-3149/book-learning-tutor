@@ -1,0 +1,41 @@
+{
+  "bookSourceComment": "error:unexpected end of stream on http://wap.pingshuku.com/...\n",
+  "bookSourceGroup": "校验可用",
+  "bookSourceName": "56书库①",
+  "bookSourceType": 0,
+  "bookSourceUrl": "http://m.pingshuku.com",
+  "bookUrlPattern": "",
+  "customOrder": 37,
+  "enabled": true,
+  "enabledCookieJar": false,
+  "enabledExplore": true,
+  "lastUpdateTime": 0,
+  "loginUrl": "",
+  "respondTime": 18480,
+  "ruleBookInfo": {
+    "coverUrl": "class.block_img2@img@src",
+    "intro": "class.intro_info@text##最新章节.*",
+    "lastChapter": "class.block_txt2@tag.p.6@a@text"
+  },
+  "ruleContent": {
+    "content": "id.nr@textNodes##.*本章未完.*|.*第.*/.*页.*",
+    "nextContentUrl": "text.下一页@href"
+  },
+  "ruleExplore": {},
+  "ruleSearch": {
+    "author": "class.case_shuqian@text##作者：",
+    "bookList": "class.bookone",
+    "bookUrl": "a@href",
+    "coverUrl": "tag.a.0@href##^.+?(\\d+)\\D(\\d+).+##http://www.pingshuku.com/files/article/image/$1/$2/$2s.jpg",
+    "lastChapter": "class.case_last@a@text",
+    "name": "class.case_name@a@text"
+  },
+  "ruleToc": {
+    "chapterList": "class.chapter.1@li@a",
+    "chapterName": "text",
+    "chapterUrl": "href",
+    "nextTocUrl": "text.下一页@href"
+  },
+  "searchUrl": "http://wap.pingshuku.com/modules/article/search.php?searchkey={{key}}",
+  "weight": 0
+}

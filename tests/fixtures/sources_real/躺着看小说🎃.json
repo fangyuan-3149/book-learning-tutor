@@ -1,0 +1,47 @@
+{
+  "bookSourceComment": "",
+  "bookSourceGroup": "",
+  "bookSourceName": "躺着看小说🎃",
+  "bookSourceType": 0,
+  "bookSourceUrl": "http://m.tanzhekan7.com#🎃",
+  "customOrder": 157,
+  "enabled": true,
+  "enabledCookieJar": true,
+  "enabledExplore": true,
+  "lastUpdateTime": 0,
+  "respondTime": 1438,
+  "ruleBookInfo": {
+    "author": "p.2@text",
+    "coverUrl": "img@src",
+    "intro": ".intro_info@text",
+    "kind": "p.3@text##分类：",
+    "name": "h1@text",
+    "lastChapter": "p.6@text##最新：",
+    "tocUrl": "text.查看目录@href",
+    "wordCount": "p.4@text##状态："
+  },
+  "ruleContent": {
+    "content": "#nr@html",
+    "nextContentUrl": "text.下一页@href",
+    "replaceRegex": "##为了让大家.*|\\[.*|\\([^)]*\\)|\\最新.+窗|无广告.*|"
+  },
+  "ruleExplore": {},
+  "ruleReview": {},
+  "ruleSearch": {
+    "author": ".line@a.2@text",
+    "bookList": ".cover@p",
+    "bookUrl": ".line@a.1@href",
+    "coverUrl": "a@href##.+\\D((\\d+)\\d{3})\\D##http://www.tanzhekan7.com/files/article/image/$2/$1/$1s.jpg###",
+    "kind": ".line@a.0@text",
+    "name": ".line@a.1@text",
+    "checkKeyWord": "我的"
+  },
+  "ruleToc": {
+    "chapterList": "ul.0@li@a",
+    "chapterName": "a@text",
+    "chapterUrl": "a@href",
+    "nextTocUrl": "text.下一页@href"
+  },
+  "searchUrl": "/s.php,{\n \"body\": \"type=articlename&s={{key}}&submit=\",\n \"charset\": \"gbk\", \n \"method\": \"POST\"\n}",
+  "weight": 0
+}
