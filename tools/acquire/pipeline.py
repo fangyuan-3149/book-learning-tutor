@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 SOURCES_DIR = ROOT / "data" / "sources"
 ACTIVE_DIR = SOURCES_DIR / "active"   # 活跃书源池（已去除登录/Java桥源）；归档见 archive/
 DISCOVERED_DIR = SOURCES_DIR / "discovered"  # 自动发现模块生成的源（discover.py 写入）
+IMPORTED_DIR = SOURCES_DIR / "imported"  # import_source.py 校验通过的外部订阅源
 SEARCH_CACHE = ROOT / "data" / "search"
 PREP_DIR = ROOT / "预处理"
 SEARCH_CACHE.mkdir(parents=True, exist_ok=True)
@@ -39,7 +40,7 @@ def _all_sources():
     归档池(archive/)不参与搜索。discovered/ 来自 discover.py 自动发现的源。
     """
     out = []
-    for d in (ACTIVE_DIR, DISCOVERED_DIR):
+    for d in (ACTIVE_DIR, DISCOVERED_DIR, IMPORTED_DIR):
         if not d.exists():
             continue
         for p in sorted(d.glob("*.json")):
@@ -59,7 +60,8 @@ def search_all(keyword, indices=None, max_workers=6):
 
     def _one(src):
         try:
-            eng = SourceEngine(src)
+            # 全源池并发搜索属批量场景：不落盘原始响应，否则每搜一次就堆几百个 HTML
+            eng = SourceEngine(src, debug=False)
             return eng.search(keyword)
         except Exception as e:
             return [{"_error": str(e), "_source": src.get("bookSourceName", "?")}]

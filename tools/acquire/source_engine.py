@@ -65,7 +65,10 @@ def load_sources(path_or_url):
 
 
 class SourceEngine:
-    def __init__(self, source, fetcher=None):
+    def __init__(self, source, fetcher=None, debug=True):
+        # debug=False：不落盘 HTTP 原始响应。批量校验（import_source 扫上千源）时必须关，
+        # 否则每次搜索都写一份 HTML，很快堆出上百 MB 垃圾。单源排错时保持 True。
+        self.debug = debug
         self.src = source
         self.base = (source.get("bookSourceUrl") or "").split("#")[0].rstrip("/")
         self.f = fetcher or Fetcher()
@@ -79,12 +82,15 @@ class SourceEngine:
         set_js_bridge(self.js)
         # 调试落盘（HTTP 原始响应）
         self.debug_dir = DEBUG_DIR / _safe(self.name)
-        self.debug_dir.mkdir(parents=True, exist_ok=True)
+        if self.debug:
+            self.debug_dir.mkdir(parents=True, exist_ok=True)
         # 下载到的「原书」落盘目录（Step 2 产物，供人类对照）
         self.book_dir = None  # 在 download_book 时按书名确定
 
     # ---- 落盘 ----
     def _save_debug(self, kind, url, text):
+        if not self.debug:
+            return ""
         fn = f"{kind}_{int(time.time()*1000)}.{'json' if _is_json_text(text) else 'html'}"
         p = self.debug_dir / fn
         p.write_text(text, encoding="utf-8")
@@ -219,10 +225,24 @@ class SourceEngine:
                 return set()
         return set()
 
+    @staticmethod
+    def _write_aux(path, text):
+        """写辅助文件（元数据/进度）。失败只警告不抛。
+
+        这些是旁路产物；Windows 上文件被杀软/索引器/编辑器短暂占用时会抛
+        PermissionError，绝不能因此让整本书的下载中断。
+        """
+        try:
+            path.write_text(text, encoding="utf-8")
+            return True
+        except OSError as e:
+            print(f"[warn] 辅助文件写入失败（不影响正文）：{path.name} -> {e}")
+            return False
+
     def _save_progress(self, done):
-        (self.book_dir / "_progress.json").write_text(
-            json.dumps({"downloaded": sorted(done), "updated": time.time()},
-                       ensure_ascii=False, indent=2), encoding="utf-8")
+        self._write_aux(self.book_dir / "_progress.json",
+                        json.dumps({"downloaded": sorted(done), "updated": time.time()},
+                                   ensure_ascii=False, indent=2))
 
     def download_book(self, book_url, book_name=None, max_chapters=None, resume=True):
         self.js.reset("book")    # B-07：进入一本新书，重置 book+chapter 层
@@ -237,7 +257,7 @@ class SourceEngine:
         meta = {"name": name, "author": info.get("author", ""), "intro": info.get("intro", ""),
                 "source": self.name, "bookUrl": book_url, "tocUrl": toc_url,
                 "chapterCount": len(toc)}
-        (self.book_dir / "_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._write_aux(self.book_dir / "_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
         # 逐章下载（B-21 断点续爬 + B-22 正文清洗）
         done = self._load_progress() if resume else set()
         count = 0

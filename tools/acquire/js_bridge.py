@@ -162,8 +162,42 @@ class NodeWorker:
                     pass
 
 
+# ---- 共享 Node worker（进程内单例）----------------------------------------
+# 教训：原先每个 SourceEngine 构造都 Popen 一个常驻 node.exe，且 atexit 注册永不注销。
+# 批量校验（import_source 扫 700+ 源、并发 16）会瞬间起几百个 Node 进程，
+# 内存/句柄耗尽 → Python 进程**硬崩**（无异常、无 traceback，直接消失）。
+# 修法两条，缺一不可：
+#   1) 懒启动：绝大多数书源是纯解析，根本不需要 JS，构造时不能起进程；
+#   2) 单例：真需要 JS 时全进程共享一个 worker（NodeWorker.call 自带锁，串行安全）。
+_SHARED_WORKER = None
+_SHARED_LOCK = threading.Lock()
+
+
+def _get_shared_worker():
+    """返回进程内共享的 NodeWorker；不可用则返回 None（调用方退到 execjs）。"""
+    global _SHARED_WORKER
+    with _SHARED_LOCK:
+        if _SHARED_WORKER is not None and _SHARED_WORKER.alive():
+            return _SHARED_WORKER
+        node = _find_node()
+        if not node:
+            return None
+        try:
+            w = NodeWorker(node, RUNTIME_JS)
+            w.call({"code": "1+1"})       # 冒烟，确认真的能用
+            _SHARED_WORKER = w
+            return w
+        except Exception:
+            _SHARED_WORKER = None
+            return None
+
+
 class JsBridge:
-    """在 Node 里求值 Legado 规则的 @js: / {{java.*}} 片段。"""
+    """在 Node 里求值 Legado 规则的 @js: / {{java.*}} 片段。
+
+    后端**懒启动**：只有真的遇到 JS 片段才会拉起 Node（或退到 execjs）。
+    纯解析源全程零子进程。
+    """
 
     def __init__(self, fetcher=None, prefer_worker=True):
         self._fetcher = fetcher            # callable(url, headers=None) -> str
@@ -172,31 +206,38 @@ class JsBridge:
         self._worker = None
         self._ctx = None                   # PyExecJS 兜底上下文
         self._ajax_cache = {}
-        self.backend = "none"
-        if prefer_worker:
-            node = _find_node()
-            if node:
-                try:
-                    self._worker = NodeWorker(node, RUNTIME_JS)
-                    self._worker.call({"code": "1+1"})   # 冒烟，确认真的能用
-                    self.backend = "worker"
-                except Exception:
-                    self._worker = None
-        if self._worker is None:
-            import execjs
-            self._ctx = execjs.compile(open(RUNTIME_JS, encoding="utf-8").read())
-            self.backend = "execjs"
+        self._prefer_worker = prefer_worker
+        self._booted = False
+        self.backend = "lazy"              # 未启动；真正求值时才确定 worker/execjs
+
+    def _ensure_backend(self):
+        """首次求值时才拉起后端。已启动则直接返回。"""
+        if self._booted:
+            return
+        self._booted = True
+        if self._prefer_worker:
+            self._worker = _get_shared_worker()
+            if self._worker is not None:
+                self.backend = "worker"
+                return
+        import execjs
+        self._ctx = execjs.compile(open(RUNTIME_JS, encoding="utf-8").read())
+        self.backend = "execjs"
 
     # ---- 作用域（B-07）----
     def reset(self, level="chapter"):
-        """清空指定层及其内层变量。level ∈ {source, book, chapter}。"""
-        if self._worker:
+        """清空指定层及其内层变量。level ∈ {source, book, chapter}。
+
+        注意：**不触发后端启动**。后端没起来就说明还没执行过任何 JS，
+        没有 JS 侧状态需要清；此时只清 Python 侧会话变量即可。
+        """
+        if self._booted and self._worker:
             try:
                 self._worker.call({"reset": level})
             except Exception:
                 pass
-        else:
-            self.variables = {} if level in ("source", "book") else self.variables
+        if level in ("source", "book"):
+            self.variables = {}
 
     # ---- ajax 预取 ----
     def _prefetch_ajax(self, expression, headers):
@@ -233,6 +274,7 @@ class JsBridge:
         if variables:
             merged.update(variables)
         ajax = self._prefetch_ajax(expr, hdrs)
+        self._ensure_backend()          # 懒启动：到这一步才真的需要 JS 后端
 
         if self._worker:
             try:
@@ -259,9 +301,27 @@ class JsBridge:
         return "" if out is None else str(out)
 
     def close(self):
-        if self._worker:
-            self._worker.close()
-            self._worker = None
+        """解除本实例对后端的引用。
+
+        worker 是**进程内共享**的，单个 JsBridge 关闭不能把它杀掉
+        （否则并发场景下会互相踢下线）。真正的回收交给 NodeWorker 的 atexit。
+        """
+        self._worker = None
+        self._ctx = None
+        self._booted = False
+        self.backend = "lazy"
+
+
+def shutdown_shared_worker():
+    """显式关掉共享 Node worker（进程收尾/测试隔离用）。"""
+    global _SHARED_WORKER
+    with _SHARED_LOCK:
+        if _SHARED_WORKER is not None:
+            try:
+                _SHARED_WORKER.close()
+            except Exception:
+                pass
+            _SHARED_WORKER = None
 
 
 if __name__ == "__main__":
@@ -339,4 +399,19 @@ if __name__ == "__main__":
     print("8) 裸变量注入 OK")
 
     b.close()
+
+    # 9) 懒启动 + 共享单例（防回归：曾经每建一个引擎就 Popen 一个 node.exe，
+    #    批量扫源时几百个进程把内存/句柄打爆）
+    fresh = [JsBridge() for _ in range(30)]
+    assert all(x._worker is None and x.backend == "lazy" for x in fresh), \
+        "构造 JsBridge 不得启动后端（懒启动被破坏）"
+    for x in fresh[:3]:
+        x.reset("source")           # reset 也不能触发启动
+    assert all(x.backend == "lazy" for x in fresh[:3]), "reset() 不得触发后端启动"
+    fresh[0].eval("result", result="z")
+    fresh[1].eval("result", result="z")
+    if fresh[0].backend == "worker":
+        assert fresh[0]._worker is fresh[1]._worker, "worker 必须是进程内共享单例"
+    print("9) 懒启动 OK：30 个实例 0 个子进程；首次求值后共用同一 worker")
+
     print("js_bridge 自测全部通过")
