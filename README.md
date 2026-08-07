@@ -67,11 +67,11 @@
 
 ## 当前状态（勾选推进）
 
-- [ ] MinerU 安装 + 第一本 PDF 试转验证
-- [ ] 章节树解析器
-- [ ] 课程文件夹生成器（含目录导读）
-- [ ] lesson_builder（逐课教学闭环）
-- [ ] 第一本书全闭环验证
+- [ ] MinerU 安装 + 第一本 PDF 试转验证（数字版/书源路径已替代：获取管道 Step3 出 预处理/*.md）
+- [x] 章节树解析器（`tools/structure/course_gen.py`：标题树 → 章/课）
+- [x] 课程文件夹生成器（含目录导读）（`tools/structure/course_gen.py` → `书库/<书名>/` 嵌套 + `00_目录导读.md` + `progress.json`）
+- [ ] lesson_builder（逐课教学闭环，由 Skill 文本驱动，agent 自驱）
+- [ ] 第一本书全闭环验证（获取→课程化→教学）
 
 ## 工作纪律
 
