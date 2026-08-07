@@ -63,7 +63,7 @@ python tools/acquire/debug_source.py ...  # 单源分步回放
 python tools/acquire/rule_trace.py ...    # 规则求值链路追踪
 ```
 
-**本地 PDF 备选路径**：`tools/pdf/mineru_run.py` → markdown → `预处理/`。
+**本地 PDF 备选路径（未来项，当前未实现）**：规划为 `tools/pdf/mineru_run.py` → markdown → `预处理/`（MinerU 待装）。当前授业以「书源获取」为主路径，PDF 入口尚未接线，勿调用不存在的脚本。
 
 ---
 
@@ -86,7 +86,7 @@ python tools/acquire/rule_trace.py ...    # 规则求值链路追踪
 - 给了订阅 URL → 先 `import_source.py` 扩源池。
 - 给了书名 → `pipeline.py all <书名>`；搜不到就换关键词或先扩源池。
 - 给了裸网址 → `discover.py` + 你写规则。
-- 给了 PDF → MinerU 路径。
+- 给了 PDF → **当前未实现**（规划 MinerU 路径，脚本尚不存在）；先用书源/订阅 URL 路径。
 
 ### ② 结构生成
 读 markdown 标题层级，定 `#→章 / ##→课`（**首本书必须人工校验边界**）。

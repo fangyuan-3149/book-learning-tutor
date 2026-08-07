@@ -64,6 +64,29 @@ def load_sources(path_or_url):
     return data if isinstance(data, list) else [data]
 
 
+def write_robust(path, text, *, label="文件"):
+    """容错写文本文件（主文件/旁路文件通用）。
+
+    沙箱或编辑器占用会拦截对**已存在文件**的覆盖写（PermissionError）。
+    首次写（文件不存在）正常成功；重跑（迭代调规则）被拦截时：
+      先尝试写入同目录旁挂文件（<名>.retry<后缀>）避免丢数据，
+      仍失败则警告并返回 False，绝不抛出中断整本/整步下载。
+    """
+    path = Path(path)
+    try:
+        path.write_text(text, encoding="utf-8")
+        return True
+    except OSError as e:
+        try:
+            side = path.with_name(path.stem + ".retry" + path.suffix)
+            side.write_text(text, encoding="utf-8")
+            print(f"[warn] {label}写入被拦截，已存旁挂：{side.name} -> {e}")
+            return True
+        except OSError as e2:
+            print(f"[warn] {label}写入失败（跳过，不影响其他文件）：{path.name} -> {e2}")
+            return False
+
+
 class SourceEngine:
     def __init__(self, source, fetcher=None, debug=True):
         # debug=False：不落盘 HTTP 原始响应。批量校验（import_source 扫上千源）时必须关，
@@ -227,17 +250,8 @@ class SourceEngine:
 
     @staticmethod
     def _write_aux(path, text):
-        """写辅助文件（元数据/进度）。失败只警告不抛。
-
-        这些是旁路产物；Windows 上文件被杀软/索引器/编辑器短暂占用时会抛
-        PermissionError，绝不能因此让整本书的下载中断。
-        """
-        try:
-            path.write_text(text, encoding="utf-8")
-            return True
-        except OSError as e:
-            print(f"[warn] 辅助文件写入失败（不影响正文）：{path.name} -> {e}")
-            return False
+        """写辅助文件（元数据/进度）。失败只警告不抛。路由到 write_robust。"""
+        return write_robust(path, text, label="辅助文件")
 
     def _save_progress(self, done):
         self._write_aux(self.book_dir / "_progress.json",
@@ -283,7 +297,8 @@ class SourceEngine:
                     body = f"[ERROR] {e}"
                 body = clean_chapter_text(body)   # B-22：落盘前清洗（去广告/章末噪声/折叠空行）
                 fn = f"{i:04d}_{_safe(ch.get('chapterName', f'第{i}章'))}.txt"
-                (self.book_dir / fn).write_text(body, encoding="utf-8")
+                # 主文件写入也走容错：沙箱拦截覆盖写时 warn+跳过，不崩整本（B-23）
+                write_robust(self.book_dir / fn, body, label="章节")
                 count += 1
                 done.add(i)
                 self._save_progress(done)         # 每章落盘即记进度（断点续爬核心）

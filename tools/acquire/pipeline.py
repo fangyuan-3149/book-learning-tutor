@@ -22,7 +22,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from bs4 import BeautifulSoup
-from source_engine import SourceEngine, load_sources, _safe, REF_DIR
+from source_engine import SourceEngine, load_sources, _safe, REF_DIR, write_robust
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SOURCES_DIR = ROOT / "data" / "sources"
@@ -106,7 +106,9 @@ def convert(book_name):
         header = f"# {m.get('name','')}\n\n> 作者：{m.get('author','')} ｜ 来源：{m.get('source','')} ｜ 章节数：{m.get('chapterCount','')}\n\n"
     md = header + "\n".join(parts)
     out = PREP_DIR / f"{_safe(book_name)}.md"
-    out.write_text(md, encoding="utf-8")
+    # 主文件写入走容错：沙箱拦截覆盖写（重跑迭代调规则）时 warn+跳过，不崩 Step3（B-23）
+    if not write_robust(out, md, label="预处理"):
+        print(f"[warn] 预处理文件写入被拦截：{out.name}（前次产物仍在，未覆盖）")
     return str(out), len(parts)
 
 
