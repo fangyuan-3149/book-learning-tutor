@@ -5,6 +5,7 @@
     python selftest.py
 """
 import sys
+import json
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -101,6 +102,36 @@ def check_post_source():
           f"详情+目录({len(toc)}章)+正文 复用同一请求入口")
 
 
+def check_resume():
+    """B-21 回归：断点续爬——首次只下 1 章（模拟中断），续爬补齐至 2 章并校验进度文件。"""
+    import glob as _glob
+    src = load_sources(str(FIX / "source.json"))[0]
+    eng = SourceEngine(src, LocalFetcher())
+    books = eng.search("测试")
+    # 第一次：只下 1 章（模拟掉线/中断）
+    r1 = eng.download_book(books[0]["bookUrl"], "续爬测试", max_chapters=1)
+    assert r1["chapters"] == 1, r1
+    # 第二次：续爬（resume 默认开），应跳过已下、补齐第 2 章
+    r2 = eng.download_book(books[0]["bookUrl"], "续爬测试")
+    assert r2["chapters"] == 2, r2
+    prog = json.loads((REF_DIR / "续爬测试" / "_progress.json").read_text(encoding="utf-8"))
+    assert sorted(prog["downloaded"]) == [1, 2], prog
+    files = list((REF_DIR / "续爬测试").glob("*.txt"))
+    assert len(files) == 2, files
+    print(f"[B-21] 断点续爬 OK：首次 1 章 → 续爬补齐至 {r2['chapters']} 章，进度文件 {sorted(prog['downloaded'])}")
+
+
+def check_clean():
+    """B-22 回归：落盘前 clean_chapter_text 去广告/章末噪声、折叠空行。"""
+    from clean import clean_chapter_text
+    raw = "第一章\n\n正文第一行。\n\n\n\n正文第二行。\n（本章完）\n下载App看全文\n"
+    out = clean_chapter_text(raw)
+    assert "本章完" not in out and "下载App" not in out, out
+    assert "\n\n\n" not in out, "多余空行未折叠"
+    assert out.startswith("第一章") and "正文第二行" in out, out
+    print("[B-22] 正文清洗 OK：去广告/章末噪声 + 折叠空行")
+
+
 def main():
     src = load_sources(str(FIX / "source.json"))[0]
     eng = SourceEngine(src, LocalFetcher())
@@ -128,6 +159,8 @@ def main():
 
     check_jsonpath()
     check_post_source()
+    check_resume()
+    check_clean()
 
     print("\n✅ 三步管道端到端通过（本地 fixtures，确定性）。引擎逻辑正确，可指向任意可达书源。")
 

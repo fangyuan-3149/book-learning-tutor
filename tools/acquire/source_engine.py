@@ -26,6 +26,7 @@ from rules import parse_object, set_js_bridge
 from transforms import apply_java, TRANSFORMS  # JS桥源转纯L1：内容解密钩子（无浏览器、无外部key）
 from js_bridge import JsBridge  # 纯 L1：在 Node 里求 @js:/{{java.*}} 片段（无浏览器、无外部key）
 from url_option import UrlOption, BrowserRequired  # B-01：URL+option 统一解析，四大动作共用
+from clean import clean_chapter_text  # B-22：正文清洗（落盘前过一遍）
 
 ROOT = Path(__file__).resolve().parent.parent.parent  # E:\授业
 DEBUG_DIR = ROOT / "data" / "debug"
@@ -208,7 +209,22 @@ class SourceEngine:
         return recs[0].get("content", "") if recs else ""
 
     # ---- Step 2：下载整本原书到 参考/<书名>/ ----
-    def download_book(self, book_url, book_name=None, max_chapters=None):
+    def _load_progress(self):
+        """断点续爬（B-21）：读已下载章节序号集合。"""
+        p = self.book_dir / "_progress.json"
+        if p.exists():
+            try:
+                return set(json.loads(p.read_text(encoding="utf-8")).get("downloaded", []))
+            except Exception:
+                return set()
+        return set()
+
+    def _save_progress(self, done):
+        (self.book_dir / "_progress.json").write_text(
+            json.dumps({"downloaded": sorted(done), "updated": time.time()},
+                       ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def download_book(self, book_url, book_name=None, max_chapters=None, resume=True):
         self.js.reset("book")    # B-07：进入一本新书，重置 book+chapter 层
         self.js.variables = {}   # 兼容旧接口（会话变量随书重置）
         info = self.get_book_info(book_url)
@@ -222,23 +238,37 @@ class SourceEngine:
                 "source": self.name, "bookUrl": book_url, "tocUrl": toc_url,
                 "chapterCount": len(toc)}
         (self.book_dir / "_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        # 逐章下载
-        written = []
-        for i, ch in enumerate(toc, 1):
-            if max_chapters and len(written) >= max_chapters:
-                break
-            curl = ch.get("chapterUrl", "")
-            if not curl:
-                continue
-            try:
-                body = self.get_content(curl)
-            except BrowserRequired as e:
-                # 该源正文动作要求 webView（L3 越界）：整本都不可能成功，早停而非逐章失败
-                return {"name": name, "dir": str(self.book_dir), "chapters": len(written),
-                        "aborted": "browser_required", "detail": str(e)}
-            except Exception as e:
-                body = f"[ERROR] {e}"
-            fn = f"{i:04d}_{_safe(ch.get('chapterName', f'第{i}章'))}.txt"
-            (self.book_dir / fn).write_text(body, encoding="utf-8")
-            written.append(fn)
-        return {"name": name, "dir": str(self.book_dir), "chapters": len(written)}
+        # 逐章下载（B-21 断点续爬 + B-22 正文清洗）
+        done = self._load_progress() if resume else set()
+        count = 0
+        try:
+            for i, ch in enumerate(toc, 1):
+                if max_chapters and count >= max_chapters:
+                    break
+                curl = ch.get("chapterUrl", "")
+                if not curl:
+                    continue
+                # 已下载（进度记录或文件在）则跳过抓取，断线可续
+                if resume and (i in done or list(self.book_dir.glob(f"{i:04d}_*.txt"))):
+                    count += 1
+                    continue
+                try:
+                    body = self.get_content(curl)
+                except BrowserRequired as e:
+                    # 该源正文动作要求 webView（L3 越界）：整本都不可能成功，早停而非逐章失败
+                    self._save_progress(done)
+                    return {"name": name, "dir": str(self.book_dir), "chapters": count,
+                            "aborted": "browser_required", "detail": str(e)}
+                except Exception as e:
+                    body = f"[ERROR] {e}"
+                body = clean_chapter_text(body)   # B-22：落盘前清洗（去广告/章末噪声/折叠空行）
+                fn = f"{i:04d}_{_safe(ch.get('chapterName', f'第{i}章'))}.txt"
+                (self.book_dir / fn).write_text(body, encoding="utf-8")
+                count += 1
+                done.add(i)
+                self._save_progress(done)         # 每章落盘即记进度（断点续爬核心）
+        except Exception:
+            self._save_progress(done)             # 中断也保活进度
+            raise
+        self._save_progress(done)
+        return {"name": name, "dir": str(self.book_dir), "chapters": count}
