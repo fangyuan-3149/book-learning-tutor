@@ -87,6 +87,23 @@ def write_robust(path, text, *, label="文件"):
             return False
 
 
+def write_robust_bytes(path, data, *, label="文件"):
+    """二进制版 write_robust（漫画页 / 音频）。逻辑同 write_robust。"""
+    path = Path(path)
+    try:
+        path.write_bytes(data)
+        return True
+    except OSError as e:
+        try:
+            side = path.with_name(path.stem + ".retry" + path.suffix)
+            side.write_bytes(data)
+            print(f"[warn] {label}写入被拦截，已存旁挂：{side.name} -> {e}")
+            return True
+        except OSError as e2:
+            print(f"[warn] {label}写入失败（跳过）：{path.name} -> {e2}")
+            return False
+
+
 class SourceEngine:
     def __init__(self, source, fetcher=None, debug=True):
         # debug=False：不落盘 HTTP 原始响应。批量校验（import_source 扫上千源）时必须关，
@@ -237,6 +254,31 @@ class SourceEngine:
         recs = parse_object(self.src.get("ruleContent", {}), root, base=self.base)
         return recs[0].get("content", "") if recs else ""
 
+    def get_content_images(self, chapter_url):
+        """漫画模式：返回本章所有图片页的绝对 URL 列表（纯 L1，img src 经 CSS/XPath 取）。"""
+        self.js.reset("chapter")
+        url, text = self._request(chapter_url)
+        self._save_debug("content", url, text)
+        text = self._apply_decrypt(text, "Content")
+        _, root = _parse_response(text)
+        recs = parse_object(self.src.get("ruleContent", {}), root, base=self.base)
+        if not recs:
+            return []
+        val = recs[0].get("content", "")
+        if isinstance(val, list):
+            urls = [u for u in val if isinstance(u, str)]
+        elif isinstance(val, str):
+            # 常见分隔：换行 / 逗号 / | / @
+            urls = [u.strip() for u in re.split(r"[\n,|@]", val) if u.strip()]
+        else:
+            urls = []
+        out = []
+        for u in urls:
+            if u and not u.startswith("http"):
+                u = urllib.parse.urljoin(url, u)
+            out.append(u)
+        return out
+
     # ---- Step 2：下载整本原书到 参考/<书名>/ ----
     def _load_progress(self):
         """断点续爬（B-21）：读已下载章节序号集合。"""
@@ -267,9 +309,11 @@ class SourceEngine:
         self.book_dir.mkdir(parents=True, exist_ok=True)
         toc_url = info.get("tocUrl") or book_url
         toc = self.get_toc(toc_url)
+        is_comic = str(self.src.get("bookSourceType")) == "1"   # 1=漫画：每章=图序列
         # 保存元数据
         meta = {"name": name, "author": info.get("author", ""), "intro": info.get("intro", ""),
                 "source": self.name, "bookUrl": book_url, "tocUrl": toc_url,
+                "bookType": "comic" if is_comic else "novel",
                 "chapterCount": len(toc)}
         self._write_aux(self.book_dir / "_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
         # 逐章下载（B-21 断点续爬 + B-22 正文清洗）
@@ -282,10 +326,44 @@ class SourceEngine:
                 curl = ch.get("chapterUrl", "")
                 if not curl:
                     continue
-                # 已下载（进度记录或文件在）则跳过抓取，断线可续
-                if resume and (i in done or list(self.book_dir.glob(f"{i:04d}_*.txt"))):
-                    count += 1
+                ch_name = _safe(ch.get("chapterName", f"第{i}章"))
+                # 断点续爬：进度记录 或 已落盘（小说 .txt / 漫画 pages/）
+                if resume:
+                    ch_done = (i in done) or list(self.book_dir.glob(f"{i:04d}_*.txt"))
+                    if is_comic:
+                        pages = self.book_dir / f"{i:04d}_{ch_name}" / "pages"
+                        ch_done = ch_done or (pages.exists() and any(pages.iterdir()))
+                    if ch_done:
+                        count += 1
+                        continue
+                if is_comic:
+                    # 漫画模式：每章 = 一个文件夹，内含 pages/(原图) + transcript.md
+                    img_urls = self.get_content_images(curl)
+                    ch_dir = self.book_dir / f"{i:04d}_{ch_name}"
+                    pages = ch_dir / "pages"
+                    pages.mkdir(parents=True, exist_ok=True)
+                    n_img = 0
+                    for j, iu in enumerate(img_urls, 1):
+                        try:
+                            data = self.f.get_bytes(iu)
+                        except Exception as e:
+                            print(f"[warn] 漫画页下载失败 {iu}: {e}")
+                            continue
+                        ext = Path(iu.split("?")[0]).suffix or ".jpg"
+                        write_robust_bytes(pages / f"{j:03d}{ext}", data, label="漫画页")
+                        n_img += 1
+                    if n_img:
+                        # 对白/旁白见原图（用户确认漫画已含文字，不另 OCR）
+                        write_robust(ch_dir / "transcript.md",
+                                     f"# {ch.get('chapterName', f'第{i}章')}\n\n"
+                                     f"本话共 {n_img} 页，原图见 `pages/`。\n"
+                                     f"对白/旁白见原图，待 OCR 文字层（可选）。\n",
+                                     label="transcript")
+                        count += 1
+                        done.add(i)
+                        self._save_progress(done)
                     continue
+                # 小说模式（默认）：正文落盘为 .txt
                 try:
                     body = self.get_content(curl)
                 except BrowserRequired as e:
@@ -296,7 +374,7 @@ class SourceEngine:
                 except Exception as e:
                     body = f"[ERROR] {e}"
                 body = clean_chapter_text(body)   # B-22：落盘前清洗（去广告/章末噪声/折叠空行）
-                fn = f"{i:04d}_{_safe(ch.get('chapterName', f'第{i}章'))}.txt"
+                fn = f"{i:04d}_{ch_name}.txt"
                 # 主文件写入也走容错：沙箱拦截覆盖写时 warn+跳过，不崩整本（B-23）
                 write_robust(self.book_dir / fn, body, label="章节")
                 count += 1

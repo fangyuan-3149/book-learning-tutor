@@ -203,6 +203,81 @@ def probe_hosts(hosts, timeout=6, workers=24, verbose=True):
     return res
 
 
+def merge_verified(sources, by="bookSourceUrl"):
+    """把可用源并入 verified.json（按 by 去重），返回 (added, pool_size)。"""
+    existing = json.load(open(VERIFIED, encoding="utf-8")) if VERIFIED.exists() else []
+    seen = {x.get(by) for x in existing if isinstance(x, dict)}
+    added = 0
+    for s in sources:
+        k = s.get(by)
+        if k and k not in seen:
+            existing.append(s)
+            seen.add(k)
+            added += 1
+    json.dump(existing, open(VERIFIED, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    return added, len(existing)
+
+
+def run_validation(srcs, kw="斗破苍穹", write=True, workers=12, probe=True,
+                   timeout=8, verbose=True, max_validate=None):
+    """对一批源对象做：去重→主机预筛→并发 L1 校验→（可选）并入 verified.json。
+
+    返回 report（cats/hosts_*/usable/added/pool_size + usable_sources 列表）。
+    aggregate.py 复用此核心处理本地仓库/用户 URL；import_source 自身也走这里。
+    """
+    report = {}
+    srcs = dedup_sources(srcs)
+    report["unique"] = len(srcs)
+    cat = Counter()
+    dead_hosts = {}
+    if probe:
+        hosts = sorted({host_of(s.get("bookSourceUrl", "")) for s in srcs} - {""})
+        _log(f"[3/4] 主机预筛：{len(hosts)} 个唯一域名…", verbose)
+        st = probe_hosts(hosts, timeout=min(timeout, 6), workers=max(workers * 2, 24), verbose=verbose)
+        dead_hosts = {h: v for h, v in st.items() if v != "ALIVE"}
+        alive_srcs = [s for s in srcs if host_of(s.get("bookSourceUrl", "")) not in dead_hosts]
+        for s in srcs:
+            h = host_of(s.get("bookSourceUrl", ""))
+            if h in dead_hosts:
+                cat[dead_hosts[h]] += 1
+        report["hosts_total"] = len(hosts)
+        report["hosts_alive"] = len(hosts) - len(dead_hosts)
+        _log(f"[3/4] 存活域名 {report['hosts_alive']}/{len(hosts)}，待验源 {len(alive_srcs)}", verbose)
+        srcs = alive_srcs
+    n = min(max_validate, len(srcs)) if max_validate else len(srcs)
+    report["validated"] = n
+    usable = []
+    vf = Fetcher(timeout=timeout)
+
+    def _one(s):
+        try:
+            return validate_one(s, kw, fetcher=vf)
+        except BaseException as e:
+            return classify_error(e), 0
+
+    _log(f"[4/4] 逐源校验 {n} 个（关键词「{kw}」）…", verbose)
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_one, s): s for s in srcs[:n]}
+        done = 0
+        for ft in as_completed(futs):
+            st, cnt = ft.result()
+            cat[st] += 1
+            done += 1
+            if st == "OK":
+                usable.append((futs[ft], cnt))
+            if verbose and done % 25 == 0:
+                _log(f"  [validate] {done}/{n} 可用 {len(usable)}", verbose)
+    report["cats"] = dict(cat)
+    report["usable"] = len(usable)
+    if write and usable:
+        added, pool = merge_verified([s for s, _ in usable])
+        report["written"] = str(VERIFIED)
+        report["added"] = added
+        report["pool_size"] = pool
+    report["usable_sources"] = [s for s, _ in usable]
+    return report
+
+
 # ---------------------------------------------------------------------------
 # 4) 主入口
 # ---------------------------------------------------------------------------
@@ -267,71 +342,11 @@ def import_source(url, kw="斗破苍穹", max_validate=None, write=True, workers
         return report
     report["parse"] = "OK"
     report["total"] = len(srcs)
-    srcs = dedup_sources(srcs)
-    report["unique"] = len(srcs)
-    _log(f"[2/4] 解析 fmt={fmt} 共 {report['total']} 源，去重后 {len(srcs)}", verbose)
-
-    cat = Counter()
-    # ---- 主机存活预筛 ----
-    dead_hosts = {}
-    if probe:
-        hosts = sorted({host_of(s.get("bookSourceUrl", "")) for s in srcs} - {""})
-        _log(f"[3/4] 主机预筛：{len(hosts)} 个唯一域名…", verbose)
-        st = probe_hosts(hosts, timeout=min(timeout, 6), workers=max(workers * 2, 24), verbose=verbose)
-        dead_hosts = {h: v for h, v in st.items() if v != "ALIVE"}
-        alive_srcs = [s for s in srcs if host_of(s.get("bookSourceUrl", "")) not in dead_hosts]
-        for s in srcs:
-            h = host_of(s.get("bookSourceUrl", ""))
-            if h in dead_hosts:
-                cat[dead_hosts[h]] += 1
-        report["hosts_total"] = len(hosts)
-        report["hosts_alive"] = len(hosts) - len(dead_hosts)
-        _log(f"[3/4] 存活域名 {report['hosts_alive']}/{len(hosts)}，待验源 {len(alive_srcs)}", verbose)
-        srcs = alive_srcs
-
-    # ---- 校验（并发） ----
-    n = min(max_validate, len(srcs)) if max_validate else len(srcs)
-    report["validated"] = n
-    usable = []  # (src, cnt)
-    vf = Fetcher(timeout=timeout)
-    done = [0]
-
-    def _one(s):
-        try:
-            return validate_one(s, kw, fetcher=vf)
-        except BaseException as e:
-            return classify_error(e), 0
-
-    _log(f"[4/4] 逐源校验 {n} 个（关键词「{kw}」）…", verbose)
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(_one, s): s for s in srcs[:n]}
-        for ft in as_completed(futs):
-            st, cnt = ft.result()
-            cat[st] += 1
-            done[0] += 1
-            if st == "OK":
-                usable.append((futs[ft], cnt))
-            if verbose and done[0] % 25 == 0:
-                _log(f"  [validate] {done[0]}/{n} 可用 {len(usable)}", verbose)
-
-    report["cats"] = dict(cat)
-    report["usable"] = len(usable)
-
-    # 写入可用源（按 bookSourceName 去重）
-    if write and usable:
-        existing = json.load(open(VERIFIED, encoding="utf-8")) if VERIFIED.exists() else []
-        seen = {x.get("bookSourceName") for x in existing}
-        added = 0
-        for s, _ in usable:
-            name = s.get("bookSourceName")
-            if name not in seen:
-                existing.append(s)
-                seen.add(name)
-                added += 1
-        json.dump(existing, open(VERIFIED, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-        report["written"] = str(VERIFIED)
-        report["added"] = added
-        report["pool_size"] = len(existing)
+    # 复用统一校验核心（也供 aggregate.py 处理本地/用户源）
+    vr = run_validation(srcs, kw=kw, write=write, workers=workers,
+                        probe=probe, timeout=timeout, verbose=verbose,
+                        max_validate=max_validate)
+    report.update(vr)
     return report
 
 

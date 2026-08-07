@@ -305,6 +305,91 @@ def generate(input_md: str | Path,
 
 
 # ---------------------------------------------------------------------------
+# 漫画课程化（B-25）：原书目录 → 书库/<书名>/ 章/课 + pages/ 原图
+# ---------------------------------------------------------------------------
+def generate_comic(ref_dir: str | Path,
+                   book_name: str | None = None,
+                   out_root: str | Path = '书库',
+                   dry_run: bool = False) -> dict:
+    """把漫画原书目录（参考/<书名>/，每话一个 NNNN_话名/ 文件夹含 pages/ 原图 + transcript.md）
+    转成与小说一致的 书库/<书名>/第XX章/第XX课/ 结构：每话 = 一章内的一课，课内 pages/ 存原图、
+    transcript.md 保留原图里的对白文字（用户确认漫画已含文字，不另 OCR）。"""
+    import shutil
+    ref = Path(ref_dir)
+    if not ref.exists():
+        raise FileNotFoundError(f'找不到原书目录：{ref}')
+    if book_name is None:
+        book_name = ref.name
+    book = sanitize(book_name)
+    out_root = Path(out_root)
+    book_dir = out_root / book
+
+    # 章文件夹：按前导编号排序
+    ch_folders = sorted(
+        [p for p in ref.iterdir() if p.is_dir() and re.match(r'^\d+_', p.name)],
+        key=lambda p: int(re.match(r'^\d+', p.name).group()))
+    if not ch_folders:
+        raise ValueError(f'{ref} 下未找到漫画章文件夹（NNNN_话名/）')
+
+    lesson_entries = []
+    toc_lines = [f'# {book_name} · 目录导读（漫画）', '', '> 进度：0 / ? 课（未开始）', '',
+                 '## 章节索引', '']
+    cnum = 0
+    for cf in ch_folders:
+        cnum += 1
+        rest = cf.name.split('_', 1)[1] if '_' in cf.name else cf.name
+        ch_title = file_title(rest) or f'第{cnum:02d}章'
+        ch_disp = strip_number_prefix(rest) or rest
+        ch_dirname = f'第{cnum:02d}章_{ch_title}'
+        pages = cf / 'pages'
+        n_pages = len([x for x in pages.iterdir() if x.is_file()]) if pages.exists() else 0
+        les_dirname = f'第01课_{ch_title}'
+        rel = f'{ch_dirname}/{les_dirname}'
+        toc_lines.append(f'### 第{cnum:02d}章 {ch_disp}')
+        toc_lines.append(f'- [第01课 {ch_disp}]({rel})  —  漫画 {n_pages} 页')
+        toc_lines.append('')
+        lesson_entries.append({'rel': rel, 'chapter': cf.name, 'lesson': ch_disp, 'pages': pages})
+
+    total = len(lesson_entries)
+    toc_lines[2] = f'> 进度：0 / {total} 课（未开始）'
+    toc_text = '\n'.join(toc_lines).rstrip() + '\n'
+
+    lessons_map = {e['rel']: {'status': 'unstarted', 'mastery': 0,
+                              'unresolved': [], 'quiz': []} for e in lesson_entries}
+    progress = {'version': PROGRESS_VERSION, 'book': book_name,
+                'current': lesson_entries[0]['rel'] if lesson_entries else None,
+                'total_lessons': total, 'updated': None, 'lessons': lessons_map,
+                'bookType': 'comic'}
+
+    if dry_run:
+        return {'book': book, 'book_dir': str(book_dir), 'chapters': len(ch_folders),
+                'lessons': total, 'toc': toc_text, 'comic': True, 'dry_run': True}
+
+    book_dir.mkdir(parents=True, exist_ok=True)
+    (book_dir / '00_目录导读.md').write_text(toc_text, encoding='utf-8')
+    (book_dir / 'progress.json').write_text(
+        json.dumps(progress, ensure_ascii=False, indent=2), encoding='utf-8')
+    for e in lesson_entries:
+        les_dir = book_dir / e['rel']
+        les_dir.mkdir(parents=True, exist_ok=True)
+        # 复制原图（书库自包含）
+        src_pages = e['pages']
+        if src_pages.exists():
+            dst_pages = les_dir / 'pages'
+            dst_pages.mkdir(parents=True, exist_ok=True)
+            for img in sorted(src_pages.iterdir()):
+                if img.is_file():
+                    shutil.copy2(img, dst_pages / img.name)
+        # transcript：保留原图里的对白文字，不另 OCR
+        src_tr = src_pages.parent / 'transcript.md'
+        tr = src_tr.read_text(encoding='utf-8') if src_tr.exists() else f'# {e["lesson"]}\n'
+        (les_dir / 'transcript.md').write_text(tr, encoding='utf-8')
+
+    return {'book': book, 'book_dir': str(book_dir), 'chapters': len(ch_folders),
+            'lessons': total, 'comic': True, 'dry_run': False}
+
+
+# ---------------------------------------------------------------------------
 # 自测
 # ---------------------------------------------------------------------------
 _SAMPLE = """# 第一章 数与运算
@@ -374,9 +459,25 @@ def selftest(verbose: bool = True) -> bool:
         assert '0 / 5 课' in toc, '目录导读进度计数错误'
         assert '第01章 数与运算' in toc
 
+        # 漫画课程化自测（离线 fixture：假原书目录 + 假图）
+        ref = tmp / '漫画书'
+        cf = ref / '0001_第一话'
+        (cf / 'pages').mkdir(parents=True)
+        (cf / 'pages' / '001.jpg').write_bytes(b'\xff\xd8\xff\xd8jpg')
+        (cf / 'pages' / '002.png').write_bytes(b'\x89PNG\r\n\x1a\n')
+        (cf / 'transcript.md').write_text('# 第一话\n\n（对白见原图）\n', encoding='utf-8')
+        cres = generate_comic(ref, out_root=out)
+        assert cres['chapters'] == 1 and cres['lessons'] == 1, cres
+        cbook = Path(cres['book_dir'])
+        assert (cbook / '第01章_第一话' / '第01课_第一话' / 'pages' / '001.jpg').exists(), '漫画页未复制'
+        assert (cbook / '第01章_第一话' / '第01课_第一话' / 'transcript.md').exists(), '缺 transcript'
+        cprog = json.loads((cbook / 'progress.json').read_text(encoding='utf-8'))
+        assert cprog['bookType'] == 'comic' and cprog['total_lessons'] == 1
+
         if verbose:
             print('[course_gen] selftest 通过：'
-                  f'{res["chapters"]} 章 / {res["lessons"]} 课，'
+                  f'小说 {res["chapters"]} 章 / {res["lessons"]} 课，'
+                  f'漫画 {cres["chapters"]} 章 / {cres["lessons"]} 课（每话=一课），'
                   f'首课={prog["current"]}')
         return True
     finally:
@@ -403,6 +504,17 @@ def main(argv=None):
 
     if not args.input:
         p.error('未指定 input，且未加 --selftest')
+
+    inp = Path(args.input)
+    # 漫画原书目录（参考/<书名>/，含 NNNN_话名/pages/）：自动走漫画课程化
+    if inp.is_dir() and any(p.is_dir() and (p / 'pages').exists() for p in inp.iterdir()):
+        res = generate_comic(inp, book_name=args.book, out_root=args.out,
+                             dry_run=args.dry_run)
+        print(f"✅ 漫画生成完成：{res['chapters']} 章 / {res['lessons']} 课（每话=一课）")
+        print(f"   目录：{res['book_dir']}")
+        return 0
+    if inp.is_dir():
+        p.error(f'输入目录 {inp} 非漫画原书布局（需含 NNNN_话名/pages/）')
 
     res = generate(args.input, book_name=args.book, out_root=args.out,
                    chapter_level=args.chapter_level, lesson_level=args.lesson_level,

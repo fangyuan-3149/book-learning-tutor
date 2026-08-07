@@ -282,6 +282,27 @@ class Fetcher:
     def post(self, url, headers=None, data=None, json_body=None):
         return self.request(url, "POST", headers, data=data, json_body=json_body)
 
+    def get_bytes(self, url, headers=None):
+        """下载二进制（漫画页图片 / 音频），返回 bytes（不解码、不解码 charset）。
+
+        漫画页是纯 L1：img src 用 CSS/XPath 取到后，这里只负责把字节拉回来。
+        """
+        hdrs = dict(headers or {})
+        if not any(k.lower() == "user-agent" for k in hdrs):
+            hdrs["User-Agent"] = self._rotate_ua()
+        self.limiter.acquire(_host_of(url))
+        last_err = None
+        for attempt in range(3):
+            try:
+                r = self.client.get(url, headers=hdrs)
+                r.raise_for_status()
+                return r.content
+            except Exception as e:
+                last_err = e
+                if attempt < 2:
+                    time.sleep(1.5 * attempt)
+        raise last_err
+
 
 if __name__ == "__main__":
     selftest()
