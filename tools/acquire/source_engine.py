@@ -72,7 +72,8 @@ class SourceEngine:
         self.headers = self.f.parse_header(source.get("header")) if hasattr(self.f, "parse_header") else {}
         # 纯 L1 JS 桥：searchUrl 里的 {{java.*}} 与 @js: 字段规则在此求值（无浏览器）
         self.js = JsBridge(fetcher=self.f)
-        self.js.variables = {}
+        self.js.reset("source")   # B-07：引擎创建即清空三层作用域，从源级开始
+        self.js.variables = {}    # 兼容旧接口（注入到 book 层的会话变量）
         self.js.headers = self.headers
         set_js_bridge(self.js)
         # 调试落盘（HTTP 原始响应）
@@ -152,7 +153,8 @@ class SourceEngine:
         tmpl = self.src.get("searchUrl", "")
         if not tmpl:
             return []
-        self.js.variables = {}  # 每次搜索重置会话变量
+        self.js.reset("book")    # B-07：换书清 book+chapter 层，保留 source 层
+        self.js.variables = {}   # 兼容旧接口（会话变量随书重置）
         url, text = self._search_fetch(tmpl, keyword, page)
         self._save_debug("search", url, text)
         text = self._apply_decrypt(text, "Search")
@@ -197,6 +199,7 @@ class SourceEngine:
         return recs
 
     def get_content(self, chapter_url):
+        self.js.reset("chapter")  # B-07：每章清 chapter 层，逐章不串变量
         url, text = self._request(chapter_url)
         self._save_debug("content", url, text)
         text = self._apply_decrypt(text, "Content")
@@ -206,6 +209,8 @@ class SourceEngine:
 
     # ---- Step 2：下载整本原书到 参考/<书名>/ ----
     def download_book(self, book_url, book_name=None, max_chapters=None):
+        self.js.reset("book")    # B-07：进入一本新书，重置 book+chapter 层
+        self.js.variables = {}   # 兼容旧接口（会话变量随书重置）
         info = self.get_book_info(book_url)
         name = book_name or info.get("name") or "untitled"
         self.book_dir = REF_DIR / _safe(name)
