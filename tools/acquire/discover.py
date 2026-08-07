@@ -60,6 +60,28 @@ def looks_like_login_page(html):
     return False
 
 
+# ---------- HTML 清洗（B-14，对标 P3 clean_html_for_llm，内化零新依赖）----------
+# 给 agent 写规则前把样本页噪声去掉：script/style/svg/noscript/header/footer/nav/aside
+# 只留 <body> 正文，让 agent 读到的结构更干净、写出的规则更准。
+_STRIP_TAGS = ("script", "style", "svg", "noscript", "header", "footer", "nav", "aside", "head", "meta", "link")
+
+
+def clean_html_for_llm(html, parser="html.parser"):
+    """清洗 HTML 供 agent 阅读/写规则：剥离噪声标签，只留 body 正文。
+
+    对齐 P3 ccivm/Legado_rule_web 的 clean_html_for_llm，但用内置 html.parser
+    （不引 lxml）。返回清洗后的 HTML 字符串。
+    """
+    if not html:
+        return ""
+    soup = BeautifulSoup(html, parser)
+    for tag in _STRIP_TAGS:
+        for el in soup.find_all(tag):
+            el.decompose()
+    body = soup.body
+    return str(body) if body else str(soup)
+
+
 # ---------- 规则回放校验 ----------
 def validate_source(src, sample_url, text, fmt):
     """用生成的规则在样本页回放，任一规则集能抽出非空即视为通过。
@@ -121,24 +143,61 @@ def discover_from_source(src, sample_url, text=None, fmt=None):
     """agent 写好书源后调用：抓样本（如需）→ 登录过滤 → 回放校验 → 落盘。
 
     不从外部 LLM 推导规则；规则由 agent 传入。
+    当样本是 HTML 时，额外产出 `cleaned_sample`（B-14 清洗版）供 agent 阅读写规则，
+    回放校验仍用原始 HTML（保证规则在真实页也成立）。
     """
     if text is None:
         text = Fetcher().get(sample_url)
     fmt = fmt or detect_format(text)
     if fmt == "html" and looks_like_login_page(text):
         return {"_error": "严格需登录（返回登录页），已过滤", "url": sample_url}
+    cleaned = clean_html_for_llm(text) if fmt == "html" else text
     ok, detail = validate_source(src, sample_url, text, fmt)
     if not ok:
-        return {"_error": f"校验未通过: {detail}", "url": sample_url, "format": fmt}
+        return {"_error": f"校验未通过: {detail}", "url": sample_url, "format": fmt,
+                "cleaned_sample": cleaned}
     path = save_discovered(src)
-    return {"source": src, "saved": path, "validated": detail, "format": fmt}
+    return {"source": src, "saved": path, "validated": detail, "format": fmt,
+            "cleaned_sample": cleaned}
+
+
+# ---------- 自测（B-14 回归，确定性、不联网）----------
+def selftest():
+    """对本地 noisy fixture 跑通：清洗去噪声 + 清洗后 HTML 仍可回放校验通过。"""
+    fx = ROOT / "tests" / "fixtures" / "sample_noisy.html"
+    html = fx.read_text(encoding="utf-8")
+    cleaned = clean_html_for_llm(html)
+    low = cleaned.lower()
+    for bad in ("<script", "<style", "<svg", "<noscript", "<header", "<footer", "<nav", "<aside", "<meta", "<link"):
+        assert bad not in low, f"清洗未去除噪声标签: {bad}"
+    assert "斗破苍穹" in cleaned and "武动乾坤" in cleaned, "清洗误删了正文书名录"
+    assert "京ICP" not in cleaned, "footer 噪声未去除"
+
+    # 用清洗后的 HTML 写一条规则并回放，证明清洗版仍可抽取（agent 基于它写源可行）
+    src = {
+        "bookSourceName": "示例站", "bookSourceUrl": "https://example.com",
+        "ruleSearch": {
+            "bookList": "class.book-item",
+            "name": "class.book-name@text",
+            "bookUrl": "class.book-name@href",
+            "author": "class.book-author@text",
+        },
+    }
+    ok, detail = validate_source(src, "https://example.com/s?q=1", cleaned, "html")
+    assert ok, f"清洗后 HTML 回放校验未通过: {detail}"
+    print("discover 自测通过：HTML 清洗去噪声 + 清洗版仍可回放抽书（B-14）")
+    return True
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("url", help="样本页 URL（书页/搜索结果页）")
-    ap.add_argument("--source", required=True, help="agent 预先写好的书源 JSON 路径")
+    ap.add_argument("url", nargs="?", help="样本页 URL（书页/搜索结果页）")
+    ap.add_argument("--source", help="agent 预先写好的书源 JSON 路径")
+    ap.add_argument("--selftest", action="store_true", help="运行确定性自测（不联网）")
     args = ap.parse_args()
+    if args.selftest:
+        selftest()
+        return
     src = json.loads(Path(args.source).read_text(encoding="utf-8"))
     res = discover_from_source(src, args.url)
     print(json.dumps(res, ensure_ascii=False, indent=2))
