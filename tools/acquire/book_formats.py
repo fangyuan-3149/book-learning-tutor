@@ -963,18 +963,22 @@ def is_image_ext(name):
     return os.path.splitext(name)[1].lower() in _IMAGE_EXTS
 
 
-def unpack_cbz(path, out_dir):
+def unpack_cbz(path, out_dir, chapters=None):
     """把 CBZ 解包成 参考/<书名>/ 的漫画课程化布局（供 course_gen.generate_comic 消费）：
 
         参考/<书名>/
-          0001_话名/        （每话=一章；整包无分目录时单话=全书）
+          0001_话名/        （每话=一章）
             pages/
               001.jpg …      （原图，自然序重排）
             transcript.md    （占位：漫画对白见原图，未 OCR）
 
     返回 (n_chapters, n_pages)。分章规则：
-      - CBZ 内顶层子目录 >1 个 → 每个子目录 = 一话（按名自然序）。
-      - 否则（单层图片或单一顶层目录）→ 全部图片归为一话（0001_全书）。
+      - CBZ 内顶层子目录 >1 个 → 每个子目录 = 一话（按名自然序）；此时忽略 chapters 参数
+        （子目录已是权威分章，不再强行重切）。
+      - 否则（单层图片或单一顶层目录）= 扁平整包：
+          * chapters 未指定 → 全部图片归为一话（0001_全书）。
+          * chapters = N (>1) → 按图片自然序切成 N 段（每段一话：0001_话001 …），
+            用于扁平整包无目录元数据时人为恢复章结构（每段页数尽量均等）。
     不处理：CBR（需 unrar）；加密/损坏的 zip 会抛错。
     """
     import zipfile
@@ -999,12 +1003,23 @@ def unpack_cbz(path, out_dir):
     if len([k for k in groups if k]) > 1:
         chapter_groups = {k: v for k, v in groups.items() if k}  # 多顶层子目录→各一话
     else:
-        chapter_groups = {"全书": img_entries}  # 单层/单目录→合并为一话
+        flat = img_entries  # 单层/单目录→扁平整包
+        if chapters and int(chapters) > 1:
+            # 扁平整包：按自然序切成 N 段（每段一话）
+            k = int(chapters)
+            ordered = sorted(flat, key=_natkey_static)
+            size = (len(ordered) + k - 1) // k  # 向上取整，末段可少几页
+            chapter_groups = {}
+            for idx in range(k):
+                seg = ordered[idx * size:(idx + 1) * size]
+                if seg:
+                    chapter_groups["话%03d" % (idx + 1)] = seg
+            if not chapter_groups:
+                chapter_groups = {"全书": flat}
+        else:
+            chapter_groups = {"全书": flat}  # 未指定 chapters→整包单话
 
-    def _natkey(s):
-        return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
-
-    items = sorted(chapter_groups.items(), key=lambda kv: _natkey(kv[0]))
+    items = sorted(chapter_groups.items(), key=lambda kv: _natkey_static(kv[0]))
     total_pages = 0
     out_dir.mkdir(parents=True, exist_ok=True)
     for i, (ch_name, files_in_ch) in enumerate(items, 1):
@@ -1014,7 +1029,7 @@ def unpack_cbz(path, out_dir):
         ch_dir = out_dir / ("%04d_%s" % (i, _safe_title(clean, 60)))
         pages_dir = ch_dir / "pages"
         pages_dir.mkdir(parents=True, exist_ok=True)
-        for j, fn in enumerate(sorted(files_in_ch, key=_natkey), 1):
+        for j, fn in enumerate(sorted(files_in_ch, key=_natkey_static), 1):
             data = zf.read(fn)
             ext = os.path.splitext(fn)[1].lower()
             (pages_dir / ("%03d%s" % (j, ext))).write_bytes(data)
@@ -1024,6 +1039,11 @@ def unpack_cbz(path, out_dir):
             encoding="utf-8")
     zf.close()
     return len(items), total_pages
+
+
+def _natkey_static(s):
+    """模块级自然序键（供扁平切段时排序，避免闭包在顶层定义前引用）。"""
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
 
 
 # ---------------------------------------------------------------------------
@@ -1312,10 +1332,26 @@ def selftest():
     n_ch2, n_pg2 = unpack_cbz(cbz2, cbz_out2)
     assert n_ch2 == 1 and n_pg2 == 2, (n_ch2, n_pg2)
     assert (Path(cbz_out2) / "0001_全书" / "pages" / "001.jpg").exists()
+    # 扁平整包 + chapters=3 → 切成 3 话（每话 2 页，共 6 图）
+    fd, cbz3 = tempfile.mkstemp(suffix=".cbz")
+    os.close(fd)
+    with _zip.ZipFile(cbz3, "w") as z:
+        for i in range(1, 7):
+            z.writestr("%03d.jpg" % i, b"\xff\xd8\xff\xffjpg%d" % i)
+    cbz_out3 = tempfile.mkdtemp(prefix="cbz_selftest3_")
+    n_ch3, n_pg3 = unpack_cbz(cbz3, cbz_out3, chapters=3)
+    assert n_ch3 == 3 and n_pg3 == 6, (n_ch3, n_pg3)
+    for idx in range(1, 4):
+        cd = Path(cbz_out3) / ("000%d_话00%d" % (idx, idx))
+        assert cd.is_dir(), "缺切分话目录：%s" % cd
+        np = len([x for x in (cd / "pages").iterdir() if x.is_file()])
+        assert np == 2, "切分话 %s 页数异常：%d" % (cd, np)
     shutil.rmtree(cbz_out, ignore_errors=True)
     shutil.rmtree(cbz_out2, ignore_errors=True)
+    shutil.rmtree(cbz_out3, ignore_errors=True)
     os.unlink(cbz)
     os.unlink(cbz2)
+    os.unlink(cbz3)
 
     # --- 用例8：detect_format 扩展名 + FB2(xml 回退) ---
     assert detect_format("book.fb2") == "fb2"

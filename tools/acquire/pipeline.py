@@ -170,13 +170,15 @@ _SKIP_DIRS = {"venv", ".venv", ".git", "node_modules", "data", "参考", "预处
               "书库", ".workbuddy", "__pycache__"}
 
 
-def ingest(path, book_name=None):
+def ingest(path, book_name=None, cbz_chunks=None):
     """格式层入口：本地书籍文件/目录 → 参考/<书名>/NNNN_title.txt。
 
     path 为文件：整本作为一本书（书名=--name 或文件名）。
     path 为目录：目录下（含子目录，跳过 venv/.git/产物等噪声目录）每个
-                 pdf/epub/djvu/mobi/azw/azw3/docx 各作为一本书（书名=文件名）。
+                 pdf/epub/djvu/mobi/azw/azw3/docx/fb2/cbz 各作为一本书（书名=文件名）。
     抽出的章节直接落 参考/<书名>/，下游 convert → course_gen 零改动消费。
+    cbz_chunks：仅对扁平整包 CBZ 生效——把无分目录的整包按图片序切成 N 话
+                （用于人为恢复章结构）；CBZ 已含多顶层子目录时忽略（子目录即分章）。
     """
     p = Path(path)
     if not p.exists():
@@ -189,7 +191,7 @@ def ingest(path, book_name=None):
             if f.is_file() and f.suffix.lower() in _BOOK_EXTS
             and not any(part in _SKIP_DIRS for part in f.parts))
     if not files:
-        raise SystemExit(f"未找到可抽取的书文件（pdf/epub/djvu/mobi/azw/azw3/docx）：{path}")
+        raise SystemExit(f"未找到可抽取的书文件（pdf/epub/djvu/mobi/azw/azw3/docx/fb2/cbz）：{path}")
     total_sec = 0
     for f in files:
         name = book_name or (p.stem if p.is_file() else f.stem)
@@ -199,7 +201,7 @@ def ingest(path, book_name=None):
         if fmt == "cbz":
             out_dir = REF_DIR / _safe(name)
             try:
-                n_ch, n_pg = unpack_cbz(str(f), out_dir)
+                n_ch, n_pg = unpack_cbz(str(f), out_dir, chapters=cbz_chunks)
             except Exception as e:
                 print(f"[warn] 跳过 {f.name}：{e}")
                 continue
@@ -269,6 +271,7 @@ def main():
     pd = sub.add_parser("download"); pd.add_argument("url"); pd.add_argument("source"); pd.add_argument("name", nargs="?"); pd.add_argument("--max", type=int, default=None)
     pc = sub.add_parser("convert"); pc.add_argument("name")
     pi = sub.add_parser("ingest"); pi.add_argument("path"); pi.add_argument("--name", default=None)
+    pi.add_argument("--chunks", type=int, default=None, help="扁平整包 CBZ 按图片序切成 N 话（仅漫画、且整包无分目录时生效）")
     pa = sub.add_parser("all"); pa.add_argument("kw"); pa.add_argument("--idx", type=int, nargs="*"); pa.add_argument("--max", type=int, default=None)
     args = ap.parse_args()
 
@@ -283,7 +286,7 @@ def main():
         out, n = convert(args.name)
         print(f"[转md] {out}（{n} 节）")
     elif args.cmd == "ingest":
-        ingest(args.path, args.name)
+        ingest(args.path, args.name, cbz_chunks=args.chunks)
     elif args.cmd == "all":
         res, cache = search_all(args.kw, args.idx)
         ok = [r for r in res if r.get("bookUrl") and not r.get("_error")]
