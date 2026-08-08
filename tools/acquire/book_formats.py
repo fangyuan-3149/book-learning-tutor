@@ -143,6 +143,65 @@ def _collapse_cjk_spacing(title):
     return "".join(out)
 
 
+def _loose_sig(s):
+    """章名/页眉的宽松签名：仅留 CJK 与字母，去空格/标点/数字（章号、页码），
+    并折叠连续重复汉字（该教材 PDF 页眉有双倍渲染伪影 '第第章章…'）。用于判定
+    一页最顶端的块是否为『章名页眉』（其签名应等于当前章名签名）。"""
+    if not s:
+        return ""
+    s = re.sub(r"[^㐀-鿿A-Za-z]", "", s)
+    s = re.sub(r"([㐀-鿿])\1+", r"\1", s)
+    return s
+
+
+def _page_text_clean(doc, p, norms=None, exclude=None):
+    """单页文本抽取（dict 模式，按位置重建段落），并剔除最顶/最底端的章级页眉/页脚块。
+
+    该教材 PDF 的章名页眉/页脚固定在每页顶/底端，且渲染异常（text 模式会被逐字拆行/
+    双倍化成 '第/章/计/算…' 或 '第第章章…'），故改用 dict 按位置取块；其签名若落在
+    norms（仅 level-1 章/前言/目录等章级标题签名，不含 '学习目标' 等小节）且不在
+    exclude（当前小节自身标题，避免误删课的正文起始）即判定为页眉/页脚并丢弃。
+    无大纲路径传 norms=None 则不剔除。返回与 get_text('text') 近似的段落文本。
+
+    注：双倍渲染伪影（如附录A 页眉 '录AA PPyytthhoonn 快' 被拆成 附/附录/…/考 多个
+    超短碎块）中，签名不等于完整章名的 '附'/'考' 两字无法被精确匹配命中，作为极小残留
+    保留——不影响章节结构与教学内容。
+    """
+    norms = norms or set()
+    exclude = exclude or set()
+    d = doc[p].get_text("dict")
+    blocks = []
+    for b in d.get("blocks", []):
+        if "lines" not in b:
+            continue
+        lines = []
+        for ln in b.get("lines", []):
+            line = "".join(sp.get("text", "") for sp in ln.get("spans", []))
+            lines.append(line)
+        text = "\n".join(lines).strip()
+        if not text:
+            continue
+        blocks.append((b["bbox"][1], b["bbox"][0], text))
+    blocks.sort(key=lambda x: (x[0], x[1]))
+
+    def _edge_strip(side):
+        # side=0 顶端，side=-1 底端
+        if not blocks:
+            return
+        sig = _loose_sig(blocks[side][2])
+        if not sig:
+            return
+        if sig in norms and sig not in exclude and len(sig) <= 15:
+            blocks.pop(side)
+            # 紧随其后的纯页码行一并剔除（少数页页码独立成块）
+            if blocks and re.match(r"^\s*\d+\s*$", blocks[side][2]):
+                blocks.pop(side)
+
+    _edge_strip(0)
+    _edge_strip(-1)
+    return "\n\n".join(t for _, _, t in blocks)
+
+
 def _needs_ocr(sections, page_count):
     if page_count <= 0:
         return False
@@ -329,16 +388,34 @@ def _outline_to_triples(toc, doc, n):
     （统一挂到最近一个 level<=1 章名下）。章自身正文即"章首到第一节之前"的引子，
     不重复子节内容。无大纲的兜底路径（_pdf_sections 下方）仍保留 _split_hierarchical。
     """
+    # 收集所有 level-1 章级标题签名（运行页眉/页脚都是章级标签，不含『学习目标』等小节）
+    chapter_norms = set()
+    for (lvl, title, _) in toc:
+        if lvl <= 1:
+            s = _loose_sig(_collapse_cjk_spacing((title or "").strip()))
+            if s:
+                chapter_norms.add(s)
+
     triples = []
     cur_chapter = "正文"
     for i, (lvl, title, page) in enumerate(toc):
         start = max(0, page - 1)
         end = (toc[i + 1][2] - 1) if i + 1 < len(toc) else n - 1
         end = max(end, start)
-        txt = "".join(doc[p].get_text("text") for p in range(start, end + 1))
         title = _collapse_cjk_spacing((title or "").strip())
         if lvl <= 1:
             cur_chapter = title
+        # exclude 仅保护『当前小节标题』（防止正文起始的小节标题被误当页眉删）；
+        # 绝不可加入当前章签名——否则当前章的页眉块（签名==章签名）将被保护而不被剔除，
+        # 残留成 '第/序/前/言…' 逐字碎片。
+        exclude = set()
+        if lvl > 1:
+            s_sig = _loose_sig(title)
+            if s_sig:
+                exclude.add(s_sig)
+        txt = "".join(_page_text_clean(doc, p, chapter_norms, exclude)
+                      for p in range(start, end + 1))
+        if lvl <= 1:
             triples.append((cur_chapter, None, txt))
         else:
             triples.append((cur_chapter, title, txt))
