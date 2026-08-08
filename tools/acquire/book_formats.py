@@ -3,9 +3,11 @@
 """
 book_formats.py — 多格式书籍 → 纯文本「章/节」层级（授业格式层 v4）
 
-把 PDF / EPUB / MOBI / AZW / AZW3 / DJVU / DOCX / TXT / MD 抽成
+把 PDF / EPUB / MOBI / AZW / AZW3 / DJVU / DOCX / TXT / MD / FB2 抽成
 「章 → 节」两层结构的章节，写入 参考/<书名>/NNNN_title.txt（每节一个文件）
 + 参考/<书名>/_sections.json（章/节分组清单），供 convert → course_gen 消费。
+CBZ（漫画）不在此文本路径内——它走 ingest 解包到 参考/<书名>/NNNN_话名/pages/
++ transcript.md，再交给 course_gen 的漫画课程化（generate_comic）。
 
 v4（"小说章没区分 / 嵌套错误"修复）核心变化：
   - extract 不再产出扁平 (title, text)，而是 (chapter, section, text) 三层信息：
@@ -75,21 +77,25 @@ _NONCHAPTER_RE = re.compile(r"^(目\s*录|contents?|index)$", re.IGNORECASE)
 
 def detect_format(path):
     """返回 'pdf' / 'epub' / 'mobi' / 'azw' / 'azw3' / 'djvu' / 'docx' /
-    'txt' / 'md' / 'unknown'。"""
+    'txt' / 'md' / 'fb2' / 'cbz' / 'unknown'。"""
     p = Path(path)
     ext = p.suffix.lower().lstrip(".")
-    if ext in ("pdf", "epub", "mobi", "azw", "azw3", "djvu", "docx", "txt", "md"):
+    if ext in ("pdf", "epub", "mobi", "azw", "azw3", "djvu", "docx", "txt", "md",
+               "fb2", "cbz"):
         return ext
     try:
-        head = p.read_bytes()[:8]
+        head = p.read_bytes()[:64]
     except Exception:
         return "unknown"
     if head.startswith(b"%PDF"):
         return "pdf"
-    if head.startswith(b"PK\x03\x04"):  # epub/mobi/azw 都是 zip 容器，靠扩展名区分
+    if head.startswith(b"PK\x03\x04"):  # epub/mobi/azw/cbz 都是 zip 容器，靠扩展名区分
         return "unknown"
     if head.startswith(b"FORM\x00\x00\x00\x0cDJVU"):
         return "djvu"
+    # FB2 是 XML（<?xml … <FictionBook）；扩展名缺失时回退识别
+    if b"<FictionBook" in head or head.lstrip()[:5] == b"<?xml":
+        return "fb2"
     return "unknown"
 
 
@@ -163,9 +169,10 @@ def _page_text_clean(doc, p, norms=None, exclude=None):
     exclude（当前小节自身标题，避免误删课的正文起始）即判定为页眉/页脚并丢弃。
     无大纲路径传 norms=None 则不剔除。返回与 get_text('text') 近似的段落文本。
 
-    注：双倍渲染伪影（如附录A 页眉 '录AA PPyytthhoonn 快' 被拆成 附/附录/…/考 多个
-    超短碎块）中，'附录/快速/…' 等可被精确签名命中；孤立单字 '附'/'考' 经 _is_runner
-    的单字子集兜底消除。仅 '录AA PPyytthhoonn 快' 整块（字母噪音叠加）仍可能残留，属无害极端伪影。
+    注：章节起始页大标题含双倍渲染伪影（如附录A 的 '附录A Python快速参考' 被拆成
+    附/附录/录AA…/考 多行）时，其块位于内容区（top≈14%）而非页面边缘，且 convert 已以
+    '# 章名' 提供干净标题，故作为无害冗余保留；_is_runner 仅做精确签名匹配、不含子集
+    兜底，避免误删正常章节标题（详见 _is_runner 注释）。
     """
     norms = norms or set()
     exclude = exclude or set()
@@ -847,6 +854,179 @@ def _try_ocr(path, fmt):
 
 
 # ---------------------------------------------------------------------------
+# FB2（FictionBook，纯 XML，零依赖）—— 小说常见格式
+# ---------------------------------------------------------------------------
+def _fb2_local(tag):
+    """取 XML 标签的本地名（去掉 {namespace} 前缀）。"""
+    return tag.split("}", 1)[-1]
+
+
+def _fb2_text(elem):
+    """递归收集元素内全部文本（含 <title>/<p> 内的文本与 tail）。"""
+    parts = []
+    if elem.text:
+        parts.append(elem.text)
+    for c in elem:
+        parts.append(_fb2_text(c))
+        if c.tail:
+            parts.append(c.tail)
+    return "".join(parts).strip()
+
+
+def _fb2_collect(sec, chapter_title, out):
+    """递归把一个 <section> 收集成 (chapter, section, text) 三元组。
+
+    映射规则（FB2 章节常 ≤2 层，更深也兼容）：
+      - 顶层 <section>（chapter_title 还没定）→ 其 <title> 当作章名，section=None。
+      - 嵌套 <section> → 继承外层章名，其 <title> 当作节名。
+      - 某 <section> 自身还有子 <section>（即"部/卷"容器）→ 容器章名沿用外层，
+        其直属 <p> 作为该章导言（section=None），子节再递归。
+      - <binary> 内嵌图片：小说极少且需 base64 解码落盘，本次仅解析文字，跳过。
+    """
+    my_title = None
+    my_paras = []
+    sub_sections = []
+    for child in sec:
+        tag = _fb2_local(child.tag)
+        if tag == "title":
+            my_title = _fb2_text(child)
+        elif tag == "section":
+            sub_sections.append(child)
+        elif tag == "image":
+            continue  # 跳过内嵌图片引用（binary 解码超出本次小说文字范围）
+        elif tag == "p":
+            my_paras.append(_fb2_text(child))
+        else:
+            # subtitle / epigraph / cite / poem / stanza 等：并入正文
+            t = _fb2_text(child)
+            if t:
+                my_paras.append(t)
+    text = "\n".join(my_paras).strip()
+    if sub_sections:
+        chapter = chapter_title if chapter_title is not None else (my_title or "正文")
+        if text:
+            out.append((chapter, None, text))  # 容器导言
+        for ss in sub_sections:
+            _fb2_collect(ss, chapter, out)
+    else:
+        if chapter_title is None:
+            chapter = my_title or "正文"
+            section = None
+        else:
+            chapter = chapter_title
+            section = my_title or "（小节）"
+        out.append((chapter, section, text))
+
+
+def _fb2_sections(path):
+    """FB2 → (chapter, section, text) 三元组列表 + page_count(0) + meta。
+
+    只解析主内容 <body>（无 name 属性）；脚注/注释 <body name="notes"> 跳过。
+    提取 <title-info> 的 book-title / author 进 meta。
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.parse(path).getroot()
+    except Exception as e:
+        raise RuntimeError("FB2 解析失败（XML 不合法？）：%s" % e)
+    meta0 = {}
+    title_info = next((b for b in root if _fb2_local(b.tag) == "title-info"), None)
+    if title_info is not None:
+        for tag in ("book-title", "author"):
+            nodes = [x for x in title_info if _fb2_local(x.tag) == tag]
+            val = _fb2_text(nodes[0]) if nodes else ""
+            if val:
+                meta0["title" if tag == "book-title" else "author"] = val
+    bodies = [b for b in root if _fb2_local(b.tag) == "body"]
+    named_none = next((b for b in bodies if not b.get("name")), None)
+    body = named_none if named_none is not None else (bodies[0] if bodies else None)
+    if body is None:
+        return [("正文", None, "")], 0, meta0
+    triples = []
+    for sec in body:
+        if _fb2_local(sec.tag) == "section":
+            _fb2_collect(sec, None, triples)
+    if not triples:
+        full = _fb2_text(body)  # 退化：整本作为单章
+        return [("正文", None, full)], 0, meta0
+    return _clean_triples([(c, s, t) for (c, s, t) in triples if t.strip()]), 0, meta0
+
+
+# ---------------------------------------------------------------------------
+# CBZ（漫画，zip 内嵌图片，零依赖）—— 仅拆分+整合：
+# 解包图片到 参考/<书名>/ 漫画课程化布局（与 source_engine 漫画下载一致）
+# ---------------------------------------------------------------------------
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
+
+
+def is_image_ext(name):
+    return os.path.splitext(name)[1].lower() in _IMAGE_EXTS
+
+
+def unpack_cbz(path, out_dir):
+    """把 CBZ 解包成 参考/<书名>/ 的漫画课程化布局（供 course_gen.generate_comic 消费）：
+
+        参考/<书名>/
+          0001_话名/        （每话=一章；整包无分目录时单话=全书）
+            pages/
+              001.jpg …      （原图，自然序重排）
+            transcript.md    （占位：漫画对白见原图，未 OCR）
+
+    返回 (n_chapters, n_pages)。分章规则：
+      - CBZ 内顶层子目录 >1 个 → 每个子目录 = 一话（按名自然序）。
+      - 否则（单层图片或单一顶层目录）→ 全部图片归为一话（0001_全书）。
+    不处理：CBR（需 unrar）；加密/损坏的 zip 会抛错。
+    """
+    import zipfile
+    out_dir = Path(out_dir)
+    try:
+        zf = zipfile.ZipFile(path)
+    except Exception as e:
+        raise RuntimeError("CBZ 解包失败（非 zip / 损坏 / 加密？）：%s" % e)
+    bad = zf.testzip()
+    if bad is not None:
+        raise RuntimeError("CBZ 含损坏项：%s" % bad)
+    img_entries = [n for n in zf.namelist()
+                   if not n.endswith("/") and is_image_ext(n)]
+    if not img_entries:
+        raise RuntimeError("CBZ 内未找到任何图片（jpg/png/…），可能实为其他格式。")
+    # 按顶层目录分组
+    groups = {}
+    for n in img_entries:
+        parts = n.split("/")
+        top = parts[0] if len(parts) > 1 else ""
+        groups.setdefault(top, []).append(n)
+    if len([k for k in groups if k]) > 1:
+        chapter_groups = {k: v for k, v in groups.items() if k}  # 多顶层子目录→各一话
+    else:
+        chapter_groups = {"全书": img_entries}  # 单层/单目录→合并为一话
+
+    def _natkey(s):
+        return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
+
+    items = sorted(chapter_groups.items(), key=lambda kv: _natkey(kv[0]))
+    total_pages = 0
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for i, (ch_name, files_in_ch) in enumerate(items, 1):
+        # 去掉 ZIP 里可能自带的 "0001_" 数字前缀，避免与本函数加的序号前缀重复
+        # （clean 为空则退回原名，例如纯数字目录名）
+        clean = re.sub(r"^\d+[\s_-]*", "", ch_name).strip() or ch_name
+        ch_dir = out_dir / ("%04d_%s" % (i, _safe_title(clean, 60)))
+        pages_dir = ch_dir / "pages"
+        pages_dir.mkdir(parents=True, exist_ok=True)
+        for j, fn in enumerate(sorted(files_in_ch, key=_natkey), 1):
+            data = zf.read(fn)
+            ext = os.path.splitext(fn)[1].lower()
+            (pages_dir / ("%03d%s" % (j, ext))).write_bytes(data)
+            total_pages += 1
+        (ch_dir / "transcript.md").write_text(
+            "# %s\n\n（漫画原图见 `pages/`，对白见原图，未做 OCR。）\n" % ch_name,
+            encoding="utf-8")
+    zf.close()
+    return len(items), total_pages
+
+
+# ---------------------------------------------------------------------------
 # 统一入口
 # ---------------------------------------------------------------------------
 def extract(path, fmt=None):
@@ -879,10 +1059,18 @@ def extract(path, fmt=None):
         triples, n, meta0 = _docx_sections(path)
     elif fmt in ("mobi", "azw", "azw3"):
         triples, n, meta0 = _mobi_sections(path)
+    elif fmt == "fb2":
+        triples, n, meta0 = _fb2_sections(path)
+    elif fmt == "cbz":
+        raise RuntimeError(
+            "CBZ 是漫画容器，不走 extract 三元组路径。\n"
+            "  请用：python pipeline.py ingest <file.cbz>\n"
+            "  它会解包到 参考/<书名>/NNNN_话名/pages/，再用 "
+            "python course_gen.py 参考/<书名>/ 课程化。")
     else:
         raise RuntimeError(
             f"不支持的格式：{fmt}（{path}）。"
-            "支持 pdf/epub/mobi/azw/azw3/djvu/docx/txt/md。")
+            "支持 pdf/epub/mobi/azw/azw3/djvu/docx/txt/md/fb2（cbz 走 ingest 漫画解包）。")
 
     # 清洗 + 去跨页页眉页脚
     sections = [{"chapter": c, "section": s, "title": (s or c),
@@ -1040,8 +1228,106 @@ def selftest():
     else:
         print("  (skipped MOBI 用例：无样本 alice.mobi)")
 
+    # --- 用例6：FB2（纯 XML 小说）→ 章/节映射 + 嵌套 + 元数据 ---
+    try:
+        import zipfile as _zf
+        fb2_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">\n'
+            '  <title-info><book-title>测试小说</book-title>'
+            '<author>测试作者</author></title-info>\n'
+            '  <body>\n'
+            '    <section><title><p>第一章 启程</p></title>'
+            '<p>夜色中，少年踏上了旅程。</p><p>风从远方吹来。</p></section>\n'
+            '    <section><title><p>第二章 相遇</p></title>'
+            '<p>他在路口遇见了旅人。</p></section>\n'
+            '    <section><title><p>第一部</p></title>'
+            '<section><title><p>第三章 开端</p></title><p>内容。</p></section>'
+            '</section>\n'
+            '  </body>\n'
+            '</FictionBook>\n'
+        )
+        fd, fb2 = tempfile.mkstemp(suffix=".fb2")
+        os.close(fd)
+        Path(fb2).write_text(fb2_xml, encoding="utf-8")
+        r = extract(fb2)
+        assert r["fmt"] == "fb2", r
+        # 本样本含嵌套（第一部>第三章），故有 section → textbook；
+        # 纯平铺章节（无嵌套）的 FB2 小说才会是 novel（见下方 flat 用例）。
+        assert r["book_type"] == "textbook", "FB2 含子节 → 应为 textbook，实际 %s" % r["book_type"]
+        chapters = [s["chapter"] for s in r["sections"]]
+        assert "第一章 启程" in chapters and "第二章 相遇" in chapters, chapters
+        # 嵌套：第一部（容器）→ 第三章 开端 应作为 节 挂在第一部 下
+        nested = [(s["chapter"], s["section"]) for s in r["sections"]
+                  if "第三章" in (s["section"] or "")]
+        assert nested and nested[0][0] == "第一部" and nested[0][1] == "第三章 开端", nested
+        assert r["meta"].get("title") == "测试小说" and r["meta"].get("author") == "测试作者", r["meta"]
+        os.unlink(fb2)
+
+        # FB2 平铺章节（无嵌套）→ novel
+        fb2_flat = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">\n'
+            '  <body>\n'
+            '    <section><title><p>第一章</p></title><p>内容一。</p></section>\n'
+            '    <section><title><p>第二章</p></title><p>内容二。</p></section>\n'
+            '  </body>\n'
+            '</FictionBook>\n'
+        )
+        fd, fb2b = tempfile.mkstemp(suffix=".fb2")
+        os.close(fd)
+        Path(fb2b).write_text(fb2_flat, encoding="utf-8")
+        rb = extract(fb2b)
+        assert rb["book_type"] == "novel", "FB2 平铺章节 → 应为 novel，实际 %s" % rb["book_type"]
+        assert len(rb["sections"]) == 2, "FB2 平铺应切出 2 章，实际 %d" % len(rb["sections"])
+        os.unlink(fb2b)
+    except ImportError:
+        print("  (skipped FB2 用例：xml.etree 不可用)")
+
+    # --- 用例7：CBZ（漫画）→ 解包到 参考/<书名>/ 漫画布局（pages/ + transcript.md） ---
+    import zipfile as _zip
+    fd, cbz = tempfile.mkstemp(suffix=".cbz")
+    os.close(fd)
+    with _zip.ZipFile(cbz, "w") as z:
+        z.writestr("0001_第一话/001.jpg", b"\xff\xd8\xff\xffjpg")
+        z.writestr("0001_第一话/002.png", b"\x89PNG\r\n\x1a\n")
+        z.writestr("0002_第二话/001.jpg", b"\xff\xd8\xff\xffjpg")
+        z.writestr("notes.txt", b"not-an-image")  # 应被忽略（非图片）
+    cbz_out = tempfile.mkdtemp(prefix="cbz_selftest_")
+    n_ch, n_pg = unpack_cbz(cbz, cbz_out)
+    assert n_ch == 2 and n_pg == 3, (n_ch, n_pg)
+    for i, ch in enumerate(("0001_第一话", "0002_第二话"), 1):
+        cd = Path(cbz_out) / ch
+        assert cd.is_dir() and (cd / "pages").is_dir(), "缺话目录/pages：%s" % cd
+        assert (cd / "transcript.md").exists(), "缺 transcript.md：%s" % cd
+        np = len([x for x in (cd / "pages").iterdir() if x.is_file()])
+        assert np == (2 if i == 1 else 1), "话 %s 页数异常：%d" % (ch, np)
+    # 单层（无子目录）CBZ → 合并为一话（0001_全书）
+    fd, cbz2 = tempfile.mkstemp(suffix=".cbz")
+    os.close(fd)
+    with _zip.ZipFile(cbz2, "w") as z:
+        z.writestr("001.jpg", b"\xff\xd8\xff\xffjpg")
+        z.writestr("002.jpg", b"\xff\xd8\xff\xffjpg")
+    cbz_out2 = tempfile.mkdtemp(prefix="cbz_selftest2_")
+    n_ch2, n_pg2 = unpack_cbz(cbz2, cbz_out2)
+    assert n_ch2 == 1 and n_pg2 == 2, (n_ch2, n_pg2)
+    assert (Path(cbz_out2) / "0001_全书" / "pages" / "001.jpg").exists()
+    shutil.rmtree(cbz_out, ignore_errors=True)
+    shutil.rmtree(cbz_out2, ignore_errors=True)
+    os.unlink(cbz)
+    os.unlink(cbz2)
+
+    # --- 用例8：detect_format 扩展名 + FB2(xml 回退) ---
+    assert detect_format("book.fb2") == "fb2"
+    assert detect_format("comic.cbz") == "cbz"
+    fd, fb2x = tempfile.mkstemp(suffix=".xml")
+    os.close(fd)
+    Path(fb2x).write_text('<?xml version="1.0"?>\n<FictionBook/>\n', encoding="utf-8")
+    assert detect_format(fb2x) == "fb2", "无扩展名的 FB2 未被 xml 回退识别"
+    os.unlink(fb2x)
+
     print("  selftest passed（大纲章含节 / 无大纲多章小说 / 扫描版标记 / DOCX / MOBI / "
-          "防御 re-split）。")
+          "FB2 / CBZ / 防御 re-split）。")
 
 
 if __name__ == "__main__":

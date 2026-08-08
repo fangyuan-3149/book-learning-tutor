@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from bs4 import BeautifulSoup
 from source_engine import SourceEngine, load_sources, _safe, REF_DIR, write_robust
-from book_formats import extract as extract_book  # 格式层：PDF/EPUB/DJVU/TXT/MD → 章节
+from book_formats import extract as extract_book, unpack_cbz  # 格式层：文本三元组 + CBZ 漫画解包
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SOURCES_DIR = ROOT / "data" / "sources"
@@ -164,7 +164,7 @@ def _sanitize_body(text):
 
 
 # 目录模式下只认这些"真书"格式，避免把项目里的 .md/.txt/venv 误吸进 参考/
-_BOOK_EXTS = {".pdf", ".epub", ".djvu", ".mobi", ".azw", ".azw3", ".docx"}
+_BOOK_EXTS = {".pdf", ".epub", ".djvu", ".mobi", ".azw", ".azw3", ".docx", ".fb2", ".cbz"}
 # 目录递归时跳过的噪声目录（含 venv / 仓库元数据 / 产物目录）
 _SKIP_DIRS = {"venv", ".venv", ".git", "node_modules", "data", "参考", "预处理",
               "书库", ".workbuddy", "__pycache__"}
@@ -193,6 +193,27 @@ def ingest(path, book_name=None):
     total_sec = 0
     for f in files:
         name = book_name or (p.stem if p.is_file() else f.stem)
+        fmt = detect_format_local(f)
+
+        # —— CBZ（漫画）：不走文本三元组，直接解包到 参考/<书名>/ 漫画布局 ——
+        if fmt == "cbz":
+            out_dir = REF_DIR / _safe(name)
+            try:
+                n_ch, n_pg = unpack_cbz(str(f), out_dir)
+            except Exception as e:
+                print(f"[warn] 跳过 {f.name}：{e}")
+                continue
+            meta = {"name": name, "format": "cbz", "bookType": "comic",
+                    "chapterCount": n_ch, "pageCount": n_pg,
+                    "source": "local-file"}
+            write_robust(out_dir / "_meta.json",
+                         json.dumps(meta, ensure_ascii=False, indent=2), label="参考")
+            print(f"[ingest] {f.name} → 参考/{_safe(name)}/ （漫画 {n_ch} 话 / {n_pg} 页，cbz）"
+                  f"下一步：python course_gen.py 参考/{_safe(name)}/")
+            total_sec += n_ch
+            continue
+
+        # —— 文本类格式：extract → 三元组 → 参考/<书名>/NNNN_title.txt ——
         try:
             r = extract_book(str(f))
         except Exception as e:
