@@ -164,8 +164,8 @@ def _page_text_clean(doc, p, norms=None, exclude=None):
     无大纲路径传 norms=None 则不剔除。返回与 get_text('text') 近似的段落文本。
 
     注：双倍渲染伪影（如附录A 页眉 '录AA PPyytthhoonn 快' 被拆成 附/附录/…/考 多个
-    超短碎块）中，签名不等于完整章名的 '附'/'考' 两字无法被精确匹配命中，作为极小残留
-    保留——不影响章节结构与教学内容。
+    超短碎块）中，'附录/快速/…' 等可被精确签名命中；孤立单字 '附'/'考' 经 _is_runner
+    的单字子集兜底消除。仅 '录AA PPyytthhoonn 快' 整块（字母噪音叠加）仍可能残留，属无害极端伪影。
     """
     norms = norms or set()
     exclude = exclude or set()
@@ -184,21 +184,27 @@ def _page_text_clean(doc, p, norms=None, exclude=None):
         blocks.append((b["bbox"][1], b["bbox"][0], text))
     blocks.sort(key=lambda x: (x[0], x[1]))
 
-    def _edge_strip(side):
-        # side=0 顶端，side=-1 底端
-        if not blocks:
-            return
-        sig = _loose_sig(blocks[side][2])
-        if not sig:
-            return
-        if sig in norms and sig not in exclude and len(sig) <= 15:
-            blocks.pop(side)
-            # 紧随其后的纯页码行一并剔除（少数页页码独立成块）
-            if blocks and re.match(r"^\s*\d+\s*$", blocks[side][2]):
-                blocks.pop(side)
+    def _is_runner(sig):
+        """边缘块是否为章级运行页眉/页脚（精确签名匹配；不含章节标题/正文，避免误删）。
 
-    _edge_strip(0)
-    _edge_strip(-1)
+        注：章节起始页的大标题（含双倍渲染伪影，如附录A 的 '附录A Python快速参考' 被
+        拆成 附/附录/录AA…/考 多行）位于内容区（top≈14%）而非页面边缘，且 convert 已以
+        '# 章名' 形式提供干净标题，故作为无害冗余保留，不作页眉剥离——强行剥离需识别
+        '双倍渲染标题'，易误删正常章节标题。
+        """
+        if not sig or sig in exclude:
+            return False
+        if sig in norms:
+            return True
+        if re.match(r"^\s*\d+\s*$", sig):
+            return True
+        return False
+
+    # 连续剥离顶端/底端运行页眉/页脚（首个非 runner 即停，避免跨正文误删）
+    while blocks and _is_runner(_loose_sig(blocks[0][2])):
+        blocks.pop(0)
+    while blocks and _is_runner(_loose_sig(blocks[-1][2])):
+        blocks.pop(-1)
     return "\n\n".join(t for _, _, t in blocks)
 
 
