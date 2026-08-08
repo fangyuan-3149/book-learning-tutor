@@ -28,5 +28,8 @@ config/backends.json
 # 备份目录（本地快照，不入库）
 _backup_*/
 
+# 本地二进制（djvulibre 等；用户本机放置，不入库）
+vendor/
+
 # 备份目录（本地快照，不入库）
 _backup_*/

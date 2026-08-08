@@ -91,28 +91,64 @@ def download(source_name, book_url, book_name=None, max_chapters=None):
 
 
 def convert(book_name):
-    """Step3：参考/<书名>/*.txt → 预处理/<书名>.md。"""
+    """Step3：参考/<书名>/*.txt → 预处理/<书名>.md（正确章/节层级）。
+
+    读 _sections.json 分组；无清单时退化为「每 txt=一章」（兼容下载/旧目录）。
+    输出：书名/作者作普通文本头（不被 course_gen 当成章），每「章」一个
+    '# 章名'，章内每「节」一个 '## 节名'；小说章无节则正文直接挂在 '# 章' 下
+    （→ course_gen 每章一课，不嵌套）。
+    """
     src_dir = REF_DIR / _safe(book_name)
     if not src_dir.exists():
         raise SystemExit(f"未找到原书目录：{src_dir}")
-    files = sorted(src_dir.glob("[0-9][0-9][0-9][0-9]_*.txt"))
-    parts = []
-    for fp in files:
-        num = fp.name[:4]
-        title = fp.name[5:-4]
-        body = html_to_text(fp.read_text(encoding="utf-8"))
-        parts.append(f"## 第{int(num)}节 {title}\n\n{body}\n")
     meta_p = src_dir / "_meta.json"
-    header = ""
-    if meta_p.exists():
-        m = json.loads(meta_p.read_text(encoding="utf-8"))
-        header = f"# {m.get('name','')}\n\n> 作者：{m.get('author','')} ｜ 来源：{m.get('source','')} ｜ 章节数：{m.get('chapterCount','')}\n\n"
+    meta = json.loads(meta_p.read_text(encoding="utf-8")) if meta_p.exists() else {}
+
+    man_p = src_dir / "_sections.json"
+    if man_p.exists():
+        manifest = json.loads(man_p.read_text(encoding="utf-8"))
+    else:
+        # 兼容下载/旧目录：每个 NNNN_*.txt = 一章（小说源每章一文件），section=None
+        files = sorted(src_dir.glob("[0-9][0-9][0-9][0-9]_*.txt"))
+        manifest = [{"chapter": fp.name[5:-4], "section": None,
+                     "title": fp.name[5:-4], "file": fp.name} for fp in files]
+
+    # 按章分组（保持首次出现顺序）
+    order = []
+    groups = {}
+    for e in manifest:
+        ch = e.get("chapter") or e.get("title") or "正文"
+        if ch not in groups:
+            groups[ch] = []
+            order.append(ch)
+        groups[ch].append(e)
+
+    parts = []
+    for ch in order:
+        parts.append(f"# {_strip_num_prefix(ch)}\n")  # 章：一级标题
+        for e in groups[ch]:
+            body = ""
+            fpath = src_dir / e["file"]
+            if fpath.exists():
+                body = html_to_text(fpath.read_text(encoding="utf-8"))
+            if e.get("section"):
+                parts.append(f"## {_strip_num_prefix(e['section'])}\n\n{body}\n")  # 节：二级
+            else:
+                parts.append(f"{body}\n")  # 小说章：正文直接挂章下（→每章一课）
+    header = (f"{meta.get('name','')}\n\n"
+              f"> 作者：{meta.get('author','')} ｜ 来源：{meta.get('source','')} ｜ "
+              f"章节数：{meta.get('chapterCount','')} ｜ 类型：{meta.get('bookType','')}\n\n")
     md = header + "\n".join(parts)
     out = PREP_DIR / f"{_safe(book_name)}.md"
-    # 主文件写入走容错：沙箱拦截覆盖写（重跑迭代调规则）时 warn+跳过，不崩 Step3（B-23）
     if not write_robust(out, md, label="预处理"):
         print(f"[warn] 预处理文件写入被拦截：{out.name}（前次产物仍在，未覆盖）")
-    return str(out), len(parts)
+    return str(out), len(manifest)
+
+
+def _strip_num_prefix(title):
+    """去掉标题首部『第N章/节/课』编号词（避免与 course_gen 自动加的 第XX章 重复）。"""
+    return re.sub(r"^第[0-9零一二三四五六七八九十百千]+\s*[章章节节节课部分段篇]\s*",
+                  "", (title or "")).strip()
 
 
 # 目录模式下只认这些"真书"格式，避免把项目里的 .md/.txt/venv 误吸进 参考/
@@ -152,16 +188,24 @@ def ingest(path, book_name=None):
             continue
         out_dir = REF_DIR / _safe(name)
         out_dir.mkdir(parents=True, exist_ok=True)
-        for i, (title, text) in enumerate(r["sections"], 1):
-            fn = out_dir / f"{i:04d}_{_safe(title)[:40]}.txt"
-            write_robust(fn, text, label="参考")
-        # 顺手写 _meta.json，convert 会读 name/author/source
+        manifest = []
+        for i, sec in enumerate(r["sections"], 1):
+            fn = out_dir / f"{i:04d}_{_safe(sec['title'])[:40]}.txt"
+            write_robust(fn, sec["text"], label="参考")
+            manifest.append({"chapter": sec["chapter"], "section": sec["section"],
+                             "title": sec["title"], "file": fn.name})
+        # 章/节分组清单：convert 据此输出 # 章 / ## 节 的正确 md（修嵌套 bug）
+        write_robust(out_dir / "_sections.json",
+                     json.dumps(manifest, ensure_ascii=False, indent=2), label="参考")
+        # 顺手写 _meta.json，convert 会读 name/author/source/bookType
         meta = dict(r.get("meta", {}))
         meta.update({"name": name, "chapterCount": len(r["sections"]),
-                     "format": r["fmt"], "needsOcr": r["needs_ocr"]})
+                     "format": r["fmt"], "needsOcr": r["needs_ocr"],
+                     "bookType": r.get("book_type", "unknown")})
         write_robust(out_dir / "_meta.json", json.dumps(meta, ensure_ascii=False, indent=2), label="参考")
         flag = " [⚠ 疑似扫描版，需OCR]" if r["needs_ocr"] else ""
-        print(f"[ingest] {f.name} → 参考/{_safe(name)}/ （{len(r['sections'])} 节，{r['fmt']}）{flag}")
+        print(f"[ingest] {f.name} → 参考/{_safe(name)}/ （{len(r['sections'])} 节，"
+              f"{r['fmt']}，{r.get('book_type','unknown')}）{flag}")
         total_sec += len(r["sections"])
     print(f"[ingest] 完成，共 {total_sec} 节。下一步：python pipeline.py convert {book_name or '<书名>'}")
 

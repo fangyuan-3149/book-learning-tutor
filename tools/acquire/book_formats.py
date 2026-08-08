@@ -1,42 +1,43 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-book_formats.py — 多格式书籍 → 纯文本章节（授业格式层 v2）
+book_formats.py — 多格式书籍 → 纯文本「章/节」层级（授业格式层 v4）
 
 把 PDF / EPUB / MOBI / AZW / AZW3 / DJVU / DOCX / TXT / MD 抽成
-(title, text) 章节列表，写入 参考/<书名>/NNNN_title.txt，供现有
-convert → course_gen 消费（convert 契约：参考/<书名>/[0-9]{4}_*.txt 每个文件 = 一节）。
+「章 → 节」两层结构的章节，写入 参考/<书名>/NNNN_title.txt（每节一个文件）
++ 参考/<书名>/_sections.json（章/节分组清单），供 convert → course_gen 消费。
 
-v2（"把格式转换做好"）：
-  - PDF 无大纲时改用「字体大小 + 标题正则」启发式切章，不再退化为逐页"第N页"；
-    抓不到章节标题时再退回整本按正则标题切，最后才逐页（保留旧行为）。
-  - 抽出的正文统一过 _clean_book_text：全角空格→半角、折叠多余空行、
-    丢弃纯页码行、跨页重复的页眉/页脚（出现于 >50% 章节的短行）。
-  - 从 PDF/EPUB 元数据取 书名/作者 写入 meta，供 convert 课头与 _meta.json 使用。
-  - 扫描版（文本层稀疏）仍只标 needs_ocr，不强制 OCR（重依赖留待用户本机）。
+v4（"小说章没区分 / 嵌套错误"修复）核心变化：
+  - extract 不再产出扁平 (title, text)，而是 (chapter, section, text) 三层信息：
+      * 小说：每「章」就是最小单位 → section=None，每章 = 一课（不往里塞节）。
+      * 课文：每「节」是最小单位，挂在所属的「章」下 → chapter=章名, section=节名。
+  - 新增 _split_hierarchical：整本文本按「章正则 + 节正则」两层切，章内再切节；
+    章起点 = 第X章/回/卷/篇 + Chapter N + 数字编号 + 序/前言/附录；
+    节起点 = 第X节/课 + Section N + X.Y 编号。
+  - PDF/EPUB/MOBI/DOCX/TXT 全部改为返回 (chapter, section, text)，并加「防御性
+    re-split」：任一段正文里若还嵌着章起点，就地再切，杜绝"一个章文件夹下塞好几章"。
+  - 扫描版仍标 needs_ocr；新增可插拔 OCR 钩子（ocr.py）：有 tesseract / MinerU /
+    Nougat 后端时自动识别，否则保留标记 + 清晰提示（不捆绑重型模型）。
 
-v3（"DOCX / MOBI 导入完善"）：
-  - 新增 DOCX：python-docx 读（标题样式→章节边界；表格→md 表格；按文档顺序保留
-    段落与表格）；从 core_properties 取 书名/作者。
-  - 新增 MOBI / AZW / AZW3：纯 Python 的 `mobi` 库解包出底层 HTML（零膨胀，不捆绑
-    calibre），BeautifulSoup 取文本后复用 _split_text_by_headings 切章；若 `mobi`
-    未装，则兜底调用 calibre 的 ebook-convert 转 EPUB 再走 EPUB 路径。
+下游契约（convert 消费）：
+  - 参考/<书名>/NNNN_title.txt：每「节」一个文件（小说每章一个）。
+  - 参考/<书名>/_sections.json：[{"chapter","section","title","file"}, ...] 顺序清单；
+    缺该清单时 convert 退化为「每 txt=一章」（兼容下载/旧目录）。
 
 依赖（按需懒加载，缺哪个报哪个，不强制全装）：
-  - pymupdf (fitz)   ：PDF / EPUB / FB2 / 图片 文本层抽取（首选，已装）
-  - ebooklib         ：EPUB 兜底解析（PyMuPDF 失败时用）
+  - pymupdf (fitz)   ：PDF / EPUB / DJVU / 图片 文本层抽取（首选，已装）
+  - ebooklib         ：EPUB 兜底解析
   - python-docx      ：DOCX 读取（标题/表格/元数据），已装
   - mobi (0.4.1)     ：MOBI/AZW/AZW3 解包为 HTML，已装
   - beautifulsoup4   ：EPUB/MOBI 的 HTML 清洗，已装
-  - djvulibre(djvutxt CLI) ：DJVU 兜底（PyMuPDF wheel 通常不含 djvu）
-  - calibre(ebook-convert) ：MOBI 兜底转换（可选，未装则 MOBI 走 mobi 库）
-  - OCR（扫描版 PDF）：可选。检测到文本层稀疏 → 标记 needs_ocr，不强制
-                       MinerU / tesseract；留给用户本机有 OCR 时再补。
+  - djvulibre(djvutxt CLI) ：DJVU 兜底（PyMuPDF wheel 通常不含 djvu）；
+                        _djvu_sections 优先找 项目/vendor/djvulibre/，再 PATH
+  - OCR（扫描版 PDF）：可选。ocr.py 提供 tesseract（本地轻量）/ MinerU / Nougat
+                        （输出 md 直接，理想）后端；均无则标 needs_ocr 不强制。
 
 用法：
   from book_formats import extract, detect_format
-  r = extract("book.pdf")          # r['sections'] = [(title, text), ...]
-  # 或命令行自测：
+  r = extract("book.pdf")          # r['sections'] = [{'chapter','section','title','text'}, ...]
   python book_formats.py --selftest
 """
 import os
@@ -51,16 +52,25 @@ from collections import Counter
 # 文本层稀疏判定阈值：平均每内容页字符数低于此值 → 疑似扫描版（需OCR）
 SCAN_THRESHOLD = 25
 
-# 章节标题正则（中文/英文/数字编号；命中即视作新章起点）
+# 章起点正则（中文/英文/数字编号；命中即视作新章起点）
 _HEAD_RE = re.compile(
     r"^\s*(第\s*[一二三四五六七八九十百千零0-9]+\s*[章回节部卷篇集]|"
     r"chapter\s+[0-9ivxIVX]+|"
     r"[0-9]{1,3}[\.\、]\s+\S|"
-    r"序[言章]|前[言]|引[言]|附[录]|后[记]|结语|目录)\b",
+    r"序[言章]|前[言]|引[言]|附[录]|后[记]|结语)\b",
+    re.IGNORECASE,
+)
+# 节起点正则（章之下的细分；课文用得多，小说一般没有）
+_SECTION_RE = re.compile(
+    r"^\s*(第\s*[一二三四五六七八九十百千零0-9]+\s*[节课部分段篇]|"
+    r"section\s+[0-9ivxIVX]+|"
+    r"[0-9]{1,3}\.[0-9]+\s+\S)\b",
     re.IGNORECASE,
 )
 # 纯页码行（可能带连字符/破折号包围）：- 12 - / 13 / —14—
 _PAGENUM_RE = re.compile(r"^[\-–—]?\s*\d{1,4}\s*[\-–—]?$")
+# 非章起点（目录/Contents 这类占位标题，不应单独成章）
+_NONCHAPTER_RE = re.compile(r"^(目\s*录|contents?|index)$", re.IGNORECASE)
 
 
 def detect_format(path):
@@ -70,7 +80,6 @@ def detect_format(path):
     ext = p.suffix.lower().lstrip(".")
     if ext in ("pdf", "epub", "mobi", "azw", "azw3", "djvu", "docx", "txt", "md"):
         return ext
-    # 无扩展名 / 未知 → 用 magic 兜底
     try:
         head = p.read_bytes()[:8]
     except Exception:
@@ -91,11 +100,17 @@ def _safe_title(title, limit=40):
     return t[:limit]
 
 
+def _strip_num_prefix(title):
+    """去掉标题首部『第N章/节/课』编号词（convert 输出 md 用，避免与 course_gen
+    自动加的 第XX章 前缀重复）。"""
+    return re.sub(r"^第[0-9零一二三四五六七八九十百千]+\s*[章章节节节课部分段篇]\s*",
+                  "", (title or "")).strip()
+
+
 def _needs_ocr(sections, page_count):
-    """按平均每页字符数判断是否扫描版（文本层空）。"""
     if page_count <= 0:
         return False
-    total = sum(len(t) for _, t in sections)
+    total = sum(len(t) for s in sections for t in [s["text"]])
     return (total / page_count) < SCAN_THRESHOLD
 
 
@@ -105,10 +120,62 @@ def _looks_like_heading(txt, maxsz, body_size):
         return False
     if _HEAD_RE.match(txt):
         return True
-    # 字体显著大于正文且较短 → 疑似标题（封面/章节大字）
     if body_size and maxsz >= body_size * 1.2 and len(txt) <= 40:
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# 两层切分：章 → 节
+# ---------------------------------------------------------------------------
+def _split_hierarchical(text):
+    """整本纯文本按「章 → 节」两层切分。
+
+    返回 [(chapter, section, text), ...]；无章起点返回 None。
+    - 章起点 = _HEAD_RE；节起点 = _SECTION_RE。
+    - 一个章内若无节起点 → (chapter, None, body)（小说：章即最小单位）。
+    - 有节起点 → 每个 (chapter, section, body)（课文：节是最小单位）。
+    - 目录/Contents 之类的占位标题不当章；正文过短的疑似 TOC 项丢弃。
+    """
+    lines = text.split("\n")
+    chap_idxs = [i for i, l in enumerate(lines) if _HEAD_RE.match(l.strip())
+                 and not _NONCHAPTER_RE.match(l.strip())]
+    if not chap_idxs:
+        return None
+    triples = []
+    for j, cstart in enumerate(chap_idxs):
+        cend = chap_idxs[j + 1] if j + 1 < len(chap_idxs) else len(lines)
+        chapter_title = lines[cstart].strip()
+        cbody_lines = lines[cstart + 1:cend]
+        sec_idxs = [k for k, l in enumerate(cbody_lines) if _SECTION_RE.match(l.strip())]
+        if not sec_idxs:
+            body = "\n".join(cbody_lines).strip()
+            triples.append((chapter_title, None, body))
+        else:
+            for si in range(len(sec_idxs)):
+                sstart = sec_idxs[si]
+                send = sec_idxs[si + 1] if si + 1 < len(sec_idxs) else len(cbody_lines)
+                sec_title = cbody_lines[sstart].strip()
+                sec_body = "\n".join(cbody_lines[sstart + 1:send]).strip()
+                triples.append((chapter_title, sec_title, sec_body))
+    return _clean_triples(triples)
+
+
+def _clean_triples(triples):
+    out = [(c, s, t) for (c, s, t) in triples if t.strip()]
+    return _drop_toc_like_triples(out) if out else triples
+
+
+def _drop_toc_like_triples(triples):
+    """丢弃『正文过短』的疑似目录(TOC)/许可证样板项（同 _drop_toc_like_sections）。"""
+    import statistics
+    if len(triples) < 3:
+        return triples
+    bodies = [len(t) for _, _, t in triples]
+    med = statistics.median(bodies) if bodies else 0
+    thr = max(200, int(0.02 * med)) if med > 0 else 200
+    out = [(c, s, t) for (c, s, t) in triples if len(t) >= thr]
+    return out if out else triples
 
 
 def _drop_empty_sections(sections):
@@ -118,12 +185,7 @@ def _drop_empty_sections(sections):
 
 
 def _drop_toc_like_sections(sections):
-    """丢弃"正文过短"的疑似目录(TOC)/许可证样板项。
-
-    EPUB/MOBI 常在正文前有一份目录：每个章节标题后仅跟副标题几个字（无正文），
-    与真正的章节（数千字）重复。真实章节绝不会 <200 字，故以
-    max(200, 2%*中位数) 为阈值丢弃短项；若全部丢弃则回退原列表。
-    """
+    """丢弃"正文过短"的疑似目录(TOC)/许可证样板项（兼容旧调用）。"""
     import statistics
     if len(sections) < 3:
         return sections
@@ -134,19 +196,21 @@ def _drop_toc_like_sections(sections):
     return out if out else sections
 
 
-def _split_text_by_headings(text):
-    """整本纯文本按标题正则切章；不足 2 个标题返回 None（交给调用方降级）。"""
-    lines = text.split("\n")
-    idxs = [i for i, l in enumerate(lines) if _HEAD_RE.match(l.strip())]
-    if len(idxs) < 2:
-        return None
-    sections = []
-    for j, start in enumerate(idxs):
-        end = idxs[j + 1] if j + 1 < len(idxs) else len(lines)
-        title = lines[start].strip()
-        body = "\n".join(lines[start + 1:end]).strip()
-        sections.append((title, body))
-    return _drop_toc_like_sections(_drop_empty_sections(sections))
+def _resplit_embedded(triples):
+    """防御性 re-split：任一段正文里若还嵌着章起点，就地再切，
+    杜绝「一个章文件夹下塞好几章」（PDF 大纲过粗 / 启发式漏切时兜底）。"""
+    out = []
+    changed = False
+    for (chapter, section, text) in triples:
+        sub = _split_hierarchical(text)
+        if sub and len(sub) > 1:
+            changed = True
+            # 用 sub 的章替换（保留外层章作为优先；sub 章若是 None 退回外层章）
+            for (c2, s2, t2) in sub:
+                out.append((c2 or chapter, s2, t2))
+        else:
+            out.append((chapter, section, text))
+    return out if changed else triples
 
 
 # ---------------------------------------------------------------------------
@@ -180,18 +244,16 @@ def _drop_running_headers(sections):
     """删跨页重复的页眉/页脚：出现于 >50% 章节、且长度<=40 的短行。"""
     if len(sections) < 3:
         return sections
-    # 先收集所有"短行"
     shorts = set()
-    for _, txt in sections:
-        for ln in txt.split("\n"):
+    for sec in sections:
+        for ln in sec["text"].split("\n"):
             s = ln.strip()
             if s and len(s) <= 40:
                 shorts.add(s)
-    # 统计每个短行出现在多少章节
     appear = Counter()
-    for _, txt in sections:
+    for sec in sections:
         present = set()
-        for ln in txt.split("\n"):
+        for ln in sec["text"].split("\n"):
             s = ln.strip()
             if s in shorts:
                 present.add(s)
@@ -201,11 +263,10 @@ def _drop_running_headers(sections):
     drop = {s for s, c in appear.items() if c >= threshold}
     if not drop:
         return sections
-    out = []
-    for title, txt in sections:
-        kept = [ln for ln in txt.split("\n") if ln.strip() not in drop]
-        out.append((title, "\n".join(kept)))
-    return out
+    for sec in sections:
+        kept = [ln for ln in sec["text"].split("\n") if ln.strip() not in drop]
+        sec["text"] = "\n".join(kept)
+    return sections
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +280,31 @@ def _pdf_meta(doc):
     }
 
 
+def _outline_to_triples(toc, doc, n):
+    """PDF 大纲 → (chapter, section, text)。lvl<=1 视为章，>=2 视为节（挂当前章）。
+    章正文若内含节起点，再用 _split_hierarchical 细分。"""
+    triples = []
+    cur_chapter = None
+    for i, (lvl, title, page) in enumerate(toc):
+        start = max(0, page - 1)
+        end = (toc[i + 1][2] - 1) if i + 1 < len(toc) else n - 1
+        end = max(end, start)
+        txt = "".join(doc[p].get_text("text") for p in range(start, end + 1))
+        if lvl <= 1:
+            sub = _split_hierarchical(txt)
+            if sub:
+                for (c2, s2, t2) in sub:
+                    triples.append((c2 or title, s2, t2))
+            else:
+                cur_chapter = title
+                triples.append((title, None, txt))
+        else:
+            if cur_chapter is None:
+                cur_chapter = "正文"
+            triples.append((cur_chapter, title, txt))
+    return _clean_triples(triples)
+
+
 def _pdf_sections(path):
     import pymupdf as fitz
     import statistics
@@ -227,15 +313,9 @@ def _pdf_sections(path):
     meta = _pdf_meta(doc)
     toc = doc.get_toc()  # [[level, title, page(1-based)], ...]
     if toc:
-        sections = []
-        for i, (lvl, title, page) in enumerate(toc):
-            start = max(0, page - 1)
-            end = (toc[i + 1][2] - 1) if i + 1 < len(toc) else n - 1
-            end = max(end, start)
-            txt = "".join(doc[p].get_text("text") for p in range(start, end + 1))
-            sections.append((title, txt))
+        triples = _outline_to_triples(toc, doc, n)
         doc.close()
-        return sections, n, meta
+        return _resplit_embedded(triples), n, meta
 
     # 无大纲 → 字体大小 + 标题正则 启发式
     body_sizes = []
@@ -264,29 +344,36 @@ def _pdf_sections(path):
             ]
             maxsz = max(sizes) if sizes else 0
             if _looks_like_heading(txt, maxsz, body_size):
-                # 仅去重「同页同标题」（目录页重复）；跨页同标题的不同章保留
                 if not headings or not (headings[-1][0] == p and headings[-1][1] == txt):
                     headings.append((p, txt))
     if headings:
-        sections = []
+        triples = []
         for i, (pg, title) in enumerate(headings):
-            end = headings[i + 1][0] if i + 1 < len(headings) else n - 1
-            txt = "\n".join(doc[p].get_text("text") for p in range(pg, end + 1))
-            sections.append((title, txt))
+            # 下一章起点页（exclusive）：正文只取到下一章所在页之前，避免把
+            # 下一章标题行并进本章（否则"一章文件夹下塞好几章"）。
+            end_excl = headings[i + 1][0] if i + 1 < len(headings) else n
+            txt = "\n".join(doc[p].get_text("text") for p in range(pg, end_excl))
+            sub = _split_hierarchical(txt)
+            if sub:
+                for (c2, s2, t2) in sub:
+                    triples.append((c2 or title, s2, t2))
+            else:
+                triples.append((title, None, txt))
         doc.close()
-        return sections, n, meta
+        return _resplit_embedded(_clean_triples(triples)), n, meta
 
     # 字体检测无果 → 整本拼接按标题正则切
     full = "\n".join(doc[p].get_text("text") for p in range(n))
-    sub = _split_text_by_headings(full)
+    sub = _split_hierarchical(full)
     if sub:
         doc.close()
-        return sub, n, meta
+        return _resplit_embedded(sub), n, meta
 
-    # 完全无结构 → 逐页（保留旧行为）
+    # 完全无结构 → 逐页（保留旧行为，标为单章）
     sections = [(f"第{p + 1}页", doc[p].get_text("text")) for p in range(n)]
     doc.close()
-    return sections, n, meta
+    triples = [(t, None, x) for t, x in sections]
+    return triples, n, meta
 
 
 # ---------------------------------------------------------------------------
@@ -300,26 +387,17 @@ def _epub_sections(path):
         meta = _pdf_meta(doc)
         toc = doc.get_toc()
         if toc:
-            sections = []
-            for i, (lvl, title, page) in enumerate(toc):
-                start = max(0, page - 1)
-                end = (toc[i + 1][2] - 1) if i + 1 < len(toc) else n - 1
-                end = max(end, start)
-                txt = "".join(doc[p].get_text("text") for p in range(start, end + 1))
-                sections.append((title, txt))
+            triples = _outline_to_triples(toc, doc, n)
             doc.close()
-            return sections, n, meta
-        # 无大纲 → 逐文档，再按标题正则切
+            return _resplit_embedded(triples), n, meta
         full = "\n".join(doc[p].get_text("text") for p in range(n))
         doc.close()
-        sub = _split_text_by_headings(full)
+        sub = _split_hierarchical(full)
         if sub:
-            return sub, n, meta
-        # 退化：整本一段
-        return [("全文", full)], n, meta
+            return _resplit_embedded(sub), n, meta
+        return [(meta.get("title") or "全文", None, full)], n, meta
     except Exception:
         pass
-    # 回退：ebooklib
     try:
         import ebooklib
         from ebooklib import epub
@@ -337,29 +415,40 @@ def _epub_sections(path):
             meta["author"] = a[0][0].strip()
     except Exception:
         pass
-    sections = []
-    idx = 0
+    triples = []
+    cur_chapter = None
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-        idx += 1
         soup = BeautifulSoup(item.get_content(), "html.parser")
         for tag in soup(["script", "style"]):
             tag.decompose()
         txt = soup.get_text("\n")
         txt = "\n".join(ln.strip() for ln in txt.splitlines() if ln.strip())
-        # 单文档内若含多章，按标题正则再切
-        sub = _split_text_by_headings(txt)
+        sub = _split_hierarchical(txt)
         if sub:
-            sections.extend(sub)
+            for (c, s, t) in sub:
+                # EPUB 单文档可能跨多章；用 sub 的章（若 None 退回当前章）
+                cur_chapter = c or cur_chapter
+                triples.append((cur_chapter or c or "正文", s, t))
         else:
-            sections.append((f"第{idx}节", txt))
-    return sections, idx, meta
+            cur_chapter = cur_chapter or meta.get("title") or "正文"
+            triples.append((cur_chapter, None, txt))
+    return _resplit_embedded(_clean_triples(triples)), len(triples), meta
 
 
 # ---------------------------------------------------------------------------
-# DJVU（pymupdf 优先；否则 djvutxt CLI；再否则报错）
+# DJVU（pymupdf 优先；否则 项目/vendor/djvulibre/ 的 djvutxt；再否则 PATH）
 # ---------------------------------------------------------------------------
+def _find_djvutxt():
+    """优先项目本地 vendor/djvulibre/，再系统 PATH。"""
+    local = Path(__file__).resolve().parent.parent.parent / "vendor" / "djvulibre"
+    for name in ("djvutxt.exe", "djvutxt"):
+        cand = local / name
+        if cand.exists():
+            return str(cand)
+    return shutil.which("djvutxt") or shutil.which("djvutxt.exe")
+
+
 def _djvu_sections(path):
-    # 1) 试试 pymupdf（部分构建带 djvu）
     try:
         import pymupdf as fitz
         doc = fitz.open(path)
@@ -368,33 +457,34 @@ def _djvu_sections(path):
             meta = _pdf_meta(doc)
             toc = doc.get_toc()
             if toc:
-                sections = []
-                for i, (lvl, title, page) in enumerate(toc):
-                    start = max(0, page - 1)
-                    end = (toc[i + 1][2] - 1) if i + 1 < len(toc) else n - 1
-                    end = max(end, start)
-                    txt = "".join(doc[p].get_text("text") for p in range(start, end + 1))
-                    sections.append((title, txt))
+                triples = _outline_to_triples(toc, doc, n)
                 doc.close()
-                return sections, n, meta
-            sections = [(f"第{p + 1}页", doc[p].get_text("text")) for p in range(n)]
+                return _resplit_embedded(triples), n, meta
+            full = "\n".join(doc[p].get_text("text") for p in range(n))
+            sub = _split_hierarchical(full)
+            if sub:
+                doc.close()
+                return _resplit_embedded(sub), n, meta
+            triples = [(f"第{p + 1}页", None, doc[p].get_text("text")) for p in range(n)]
             doc.close()
-            return sections, n, meta
+            return triples, n, meta
     except Exception:
         pass
-    # 2) djvulibre 的 djvutxt CLI
-    djvutxt = shutil.which("djvutxt") or shutil.which("djvutxt.exe")
+    djvutxt = _find_djvutxt()
     if djvutxt:
         try:
             out = subprocess.run([djvutxt, path], capture_output=True, text=True, timeout=120)
             txt = out.stdout or ""
         except Exception as e:
             raise RuntimeError("djvutxt 执行失败：%s" % e)
-        # 全本一段（djvu 分页文本难拆，v1 整本一节；后续可按页 djvutxt --page 细化）
-        return [(os.path.splitext(os.path.basename(path))[0] or "全文", txt)], 1, {}
+        sub = _split_hierarchical(txt)
+        if sub:
+            return _resplit_embedded(sub), len(sub), {}
+        return [("全文", None, txt)], 1, {}
     raise RuntimeError(
-        "DJVU 抽取失败：当前环境 PyMuPDF 未带 djvu 支持，且未装 djvulibre(djvutxt)。"
-        "安装 djvulibre 后重试，或改用 PDF/EPUB。")
+        "DJVU 抽取失败：当前环境 PyMuPDF 未带 djvu 支持，且未装 djvulibre(djvutxt)。\n"
+        "  已支持本地化：把 djvutxt.exe 放到 项目/vendor/djvulibre/ 即可（无需装系统版）。\n"
+        "  或从 https://sourceforge.net/projects/djvu/ 下载 DjVuLibre 后放入该目录。")
 
 
 # ---------------------------------------------------------------------------
@@ -403,24 +493,36 @@ def _djvu_sections(path):
 def _text_sections(path, is_md=False):
     raw = Path(path).read_text(encoding="utf-8", errors="ignore")
     if is_md:
-        # md 含多个 '# ' 一级标题则按章切，否则整本
-        heads = re.findall(r"(?m)^#\s+(.+)$", raw)
-        if len(heads) >= 2:
-            parts = re.split(r"(?m)^#\s+", raw)
-            sections = []
-            for i, seg in enumerate(parts[1:], 1):
-                title = seg.splitlines()[0].strip() if seg.strip() else f"第{i}章"
-                sections.append((title, seg))
-            return sections, len(sections), {}
+        # md：# 章，##/### 节（层级切分）
+        lines = raw.split("\n")
+        heads = [(i, l) for i, l in enumerate(lines)
+                 if re.match(r"^(#{1,6})\s+", l)]
+        if len(heads) >= 1:
+            triples = []
+            cur_chapter = None
+            for j, (idx, line) in enumerate(heads):
+                m = re.match(r"^(#{1,6})\s+(.*)$", line)
+                level = len(m.group(1)); title = m.group(2).strip()
+                nxt = heads[j + 1][0] if j + 1 < len(heads) else len(lines)
+                body = "\n".join(lines[idx + 1:nxt]).strip()
+                if level <= 1:
+                    cur_chapter = title
+                    triples.append((title, None, body))
+                else:
+                    triples.append((cur_chapter or "正文", title, body))
+            return _clean_triples(triples), len(triples), {}
+    # 纯 txt 或无标题 md → 整本按章正则切
+    sub = _split_hierarchical(raw)
+    if sub:
+        return _resplit_embedded(sub), len(sub), {}
     title = os.path.splitext(os.path.basename(path))[0]
-    return [(title, raw)], 1, {}
+    return [(title, None, raw)], 1, {}
 
 
 # ---------------------------------------------------------------------------
-# DOCX（python-docx：标题样式→章节；表格→md；按文档顺序保留段落/表格）
+# DOCX（python-docx：标题样式层级→章/节；表格→md；按文档顺序保留段落/表格）
 # ---------------------------------------------------------------------------
 def _iter_block_items(parent):
-    """按文档顺序产出 段落/表格 块级元素（保留二者相对顺序，教科书表格不丢）。"""
     from docx.document import Document as _Doc
     from docx.oxml.table import CT_Tbl
     from docx.oxml.text.paragraph import CT_P
@@ -431,7 +533,7 @@ def _iter_block_items(parent):
     elif isinstance(parent, Table):
         elem = parent._tbl
     else:
-        elem = parent._tc  # _Cell
+        elem = parent._tc
     for child in elem.iterchildren():
         if isinstance(child, CT_P):
             yield Paragraph(child, parent)
@@ -440,7 +542,6 @@ def _iter_block_items(parent):
 
 
 def _docx_table_to_md(table):
-    """表格 → markdown 表格（保留结构，供课程化消费）。"""
     rows = []
     for r in table.rows:
         cells = [c.text.strip().replace("\n", " ").replace("|", "/") for c in r.cells]
@@ -456,9 +557,14 @@ def _docx_table_to_md(table):
     return "\n".join(out)
 
 
-def _is_docx_heading(para):
+def _docx_heading_level(para):
     name = (para.style.name or "") if para.style else ""
-    return name.lower().startswith("heading") or name.startswith("标题")
+    m = re.match(r"(?:Heading|标题)\s*(\d+)", name, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    if name.lower().startswith("heading") or name.startswith("标题"):
+        return 1
+    return None
 
 
 def _docx_sections(path):
@@ -473,23 +579,29 @@ def _docx_sections(path):
     if getattr(cp, "author", None):
         meta["author"] = cp.author.strip()
     fallback = meta.get("title") or os.path.splitext(os.path.basename(path))[0]
-    sections = []
-    cur_title = None
+    triples = []
+    cur_chapter = None
+    cur_section = None
     buf = []
 
     def flush():
-        nonlocal cur_title, buf
-        if cur_title is not None or buf:
-            sections.append((cur_title or fallback, "\n".join(buf)))
-        cur_title = None
+        nonlocal cur_section, buf
+        if buf:
+            triples.append((cur_chapter or fallback, cur_section, "\n".join(buf)))
+        cur_section = None
         buf = []
 
     for blk in _iter_block_items(doc):
         if isinstance(blk, _P):
             txt = blk.text.strip()
-            if _is_docx_heading(blk) and txt:
+            lvl = _docx_heading_level(blk)
+            if lvl is not None and txt:
                 flush()
-                cur_title = txt
+                if lvl <= 1:
+                    cur_chapter = txt
+                    cur_section = None
+                else:
+                    cur_section = txt
             elif txt:
                 buf.append(txt)
         elif isinstance(blk, _T):
@@ -497,15 +609,15 @@ def _docx_sections(path):
             if md:
                 buf.append(md)
     flush()
-    if not sections:
-        sections = [(fallback, "")]
-    return sections, len(sections), meta
+    if not triples:
+        triples = [(fallback, None, "")]
+    return _resplit_embedded(_clean_triples(triples)), len(triples), meta
 
 
 # ---------------------------------------------------------------------------
 # MOBI / AZW / AZW3（mobi 库解包为 HTML，零膨胀；兜底 calibre 转 EPUB）
 # ---------------------------------------------------------------------------
-def _mobi_html_to_sections(html_path, fallback_title="全文"):
+def _mobi_html_to_triples(html_path, fallback_title="全文"):
     from bs4 import BeautifulSoup
     try:
         html = open(html_path, encoding="utf-8", errors="ignore").read()
@@ -517,7 +629,6 @@ def _mobi_html_to_sections(html_path, fallback_title="全文"):
     meta = {}
     if soup.title and soup.title.string:
         meta["title"] = soup.title.string.strip()
-    # 尝试从正文抓作者（Gutenberg 等 boilerplate："... by Author"）
     full0 = soup.get_text("\n")
     m = re.search(r"Project Gutenberg eBook of .*? by (.+?)[\r\n]", full0)
     if m:
@@ -525,44 +636,52 @@ def _mobi_html_to_sections(html_path, fallback_title="全文"):
 
     heads = [h for h in soup.find_all(["h1", "h2", "h3"]) if h.get_text(strip=True)]
     if len(heads) >= 2:
-        # 有 HTML 标题标签 → 按文档顺序的 段落/标题/表格 块切章
-        sections = []
-        cur_title = None
+        triples = []
+        cur_chapter = None
+        cur_section = None
         buf = []
+
+        def flush():
+            nonlocal cur_section, buf
+            if buf:
+                triples.append((cur_chapter or fallback_title, cur_section, "\n".join(buf)))
+            cur_section = None
+            buf = []
+
         blocks = soup.find_all(["h1", "h2", "h3", "p", "table"])
         for el in blocks:
             if el.name in ("h1", "h2", "h3"):
-                if cur_title is not None or buf:
-                    sections.append((cur_title or fallback_title, "\n".join(buf)))
-                cur_title = el.get_text(strip=True)
-                buf = []
+                flush()
+                t = el.get_text(strip=True)
+                if el.name == "h1":
+                    cur_chapter = t
+                    cur_section = None
+                else:
+                    cur_section = t
             else:
                 t = el.get_text(strip=True)
                 if t:
                     buf.append(t)
-        if cur_title is not None or buf:
-            sections.append((cur_title or fallback_title, "\n".join(buf)))
-        secs = _drop_toc_like_sections(_drop_empty_sections(sections))
+        flush()
+        secs = _resplit_embedded(_clean_triples(triples))
         return secs, len(secs), meta
 
-    # 无 HTML 标题标签 → 整本文本按标题正则切（覆盖 Alice 这类 "CHAPTER I." 起步）
+    # 无 HTML 标题标签 → 整本文本按章→节切（覆盖 Alice 这类 "CHAPTER I." 起步）
     full = soup.get_text("\n")
-    sub = _split_text_by_headings(full)
+    sub = _split_hierarchical(full)
     if sub:
-        return sub, len(sub), meta
-    return [(meta.get("title") or fallback_title, full.strip())], 1, meta
+        return _resplit_embedded(sub), len(sub), meta
+    return [(meta.get("title") or fallback_title, None, full.strip())], 1, meta
 
 
 def _mobi_sections(path):
-    # 1) 纯 Python 的 mobi 库解包（零膨胀，首选）
     try:
         import mobi
         _td, html_path = mobi.extract(path)
-        return _mobi_html_to_sections(
+        return _mobi_html_to_triples(
             html_path, fallback_title=os.path.splitext(os.path.basename(path))[0])
     except ImportError:
         pass
-    # 2) 兜底：calibre ebook-convert 转 EPUB → 走 EPUB 路径
     ec = shutil.which("ebook-convert") or shutil.which("ebook-convert.exe")
     if ec:
         import tempfile as _tf
@@ -587,18 +706,31 @@ def _mobi_sections(path):
 
 
 # ---------------------------------------------------------------------------
+# OCR 钩子（可选）—— 扫描版 PDF/DJVU 文本层空时调用
+# ---------------------------------------------------------------------------
+def _try_ocr(path, fmt):
+    """若本机有 OCR 后端（tesseract / MinerU / Nougat），对扫描版做识别。
+    返回 (text_or_None, backend_name_or_None)。无后端 → (None, None)。"""
+    try:
+        from ocr import ocr_document
+        return ocr_document(path, fmt)
+    except Exception as e:
+        return None, f"OCR 钩子异常：{e}"
+
+
+# ---------------------------------------------------------------------------
 # 统一入口
 # ---------------------------------------------------------------------------
 def extract(path, fmt=None):
-    """抽取一本书为章节列表。
+    """抽取一本书为「章/节」层级章节。
 
     返回 dict：
       {
         'fmt': str, 'page_count': int, 'needs_ocr': bool,
-        'sections': [(title, text), ...],   # text 已清洗
+        'book_type': 'novel'|'textbook'|'unknown',
+        'sections': [{'chapter','section','title','text'}, ...],  # text 已清洗
         'meta': {'name','source','title','author', ...}
       }
-    异常：格式不支持 / 依赖缺失 → RuntimeError（带可操作提示）。
     """
     path = str(path)
     if not os.path.exists(path):
@@ -606,35 +738,53 @@ def extract(path, fmt=None):
     fmt = fmt or detect_format(path)
     meta0 = {}
     if fmt == "pdf":
-        sections, n, meta0 = _pdf_sections(path)
+        triples, n, meta0 = _pdf_sections(path)
     elif fmt == "epub":
-        sections, n, meta0 = _epub_sections(path)
+        triples, n, meta0 = _epub_sections(path)
     elif fmt == "djvu":
-        sections, n, meta0 = _djvu_sections(path)
+        triples, n, meta0 = _djvu_sections(path)
     elif fmt == "txt":
-        sections, n, meta0 = _text_sections(path, is_md=False)
+        triples, n, meta0 = _text_sections(path, is_md=False)
     elif fmt == "md":
-        sections, n, meta0 = _text_sections(path, is_md=True)
+        triples, n, meta0 = _text_sections(path, is_md=True)
     elif fmt == "docx":
-        sections, n, meta0 = _docx_sections(path)
+        triples, n, meta0 = _docx_sections(path)
     elif fmt in ("mobi", "azw", "azw3"):
-        sections, n, meta0 = _mobi_sections(path)
+        triples, n, meta0 = _mobi_sections(path)
     else:
         raise RuntimeError(
             f"不支持的格式：{fmt}（{path}）。"
             "支持 pdf/epub/mobi/azw/azw3/djvu/docx/txt/md。")
 
-    # 清洗：通用书本清洗 + 去跨页页眉页脚
-    clean = [(t, _clean_book_text(x)) for t, x in sections]
-    clean = _drop_running_headers(clean)
-    needs_ocr = _needs_ocr(clean, n) if fmt in ("pdf", "djvu", "epub") else False
+    # 清洗 + 去跨页页眉页脚
+    sections = [{"chapter": c, "section": s, "title": (s or c),
+                 "text": _clean_book_text(t)} for (c, s, t) in triples]
+    sections = _drop_running_headers(sections)
+
+    # 扫描版判定 + 可选 OCR
+    needs_ocr = _needs_ocr(sections, n) if fmt in ("pdf", "djvu", "epub") else False
+    if needs_ocr and fmt in ("pdf", "djvu"):
+        ocr_text, backend = _try_ocr(path, fmt)
+        if ocr_text and ocr_text.strip():
+            sub = _split_hierarchical(ocr_text)
+            if sub:
+                sections = [{"chapter": c, "section": s, "title": (s or c),
+                             "text": _clean_book_text(t)}
+                            for (c, s, t) in _resplit_embedded(sub)]
+                needs_ocr = False
+                meta0["ocr_backend"] = backend or "unknown"
+
+    # 书籍类型：任一带 section → 课文（章含节）；否则小说（章即最小单位）
+    book_type = "textbook" if any(s["section"] for s in sections) else "novel"
+
     meta = {"name": os.path.splitext(os.path.basename(path))[0], "source": "local-file"}
     meta.update({k: v for k, v in meta0.items() if v})
     return {
         "fmt": fmt,
         "page_count": n,
         "needs_ocr": needs_ocr,
-        "sections": clean,
+        "book_type": book_type,
+        "sections": sections,
         "meta": meta,
     }
 
@@ -650,26 +800,33 @@ def selftest():
         print("   skipped: pymupdf 缺失（%s）" % e)
         return
     import tempfile
-    import statistics
 
-    # --- 用例1：带大纲的 PDF → 按大纲拆 2 章 ---
+    # --- 用例1：带大纲的 PDF（课文：章含节）→ 按大纲拆 2 章，含节 ---
     d = fitz.open()
-    for i in range(3):
+    for i in range(4):
         pg = d.new_page()
         pg.insert_text((72, 72), f"这是第 {i + 1} 页的示例正文。")
-    d.set_toc([(1, "第一章 示例", 1), (1, "第二章 示例", 2)])
+    d.set_toc([
+        (1, "第一章 整数", 1),
+        (2, "第一节 自然数", 1),
+        (2, "第二节 四则运算", 2),
+        (1, "第二章 代数", 3),
+        (2, "第一节 方程", 3),
+    ])
     fd, pdf1 = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     d.save(pdf1)
     d.close()
     r = extract(pdf1)
-    assert r["fmt"] == "pdf" and r["page_count"] == 3
-    assert len(r["sections"]) == 2, "大纲应拆成 2 章"
-    assert "第一章" in r["sections"][0][0] and "第二章" in r["sections"][1][0]
+    assert r["fmt"] == "pdf" and r["page_count"] == 4
+    assert r["book_type"] == "textbook", "大纲含节 → 应为 textbook，实际 %s" % r["book_type"]
+    chs = [s["chapter"] for s in r["sections"]]
+    secs = [s["section"] for s in r["sections"] if s["section"]]
+    assert "第一章 整数" in chs and "第二章 代数" in chs, chs
+    assert "第一节 自然数" in secs and "第二节 四则运算" in secs, secs
     os.unlink(pdf1)
 
-    # --- 用例2：无大纲，但含大字"Chapter N"标题 → 启发式切 2 章 ---
-    # （用拉丁文本：base14 字体可真实抽取，避免 CJK tofu 导致标题相同被误并）
+    # --- 用例2：无大纲小说 PDF（多章，无节）→ 启发式切多章，book_type=novel ---
     d = fitz.open()
     p1 = d.new_page()
     p1.insert_text((72, 60), "Chapter 1 The Beginning", fontsize=18)
@@ -678,25 +835,29 @@ def selftest():
     p2.insert_text((72, 60), "Chapter 2 The Encounter", fontsize=18)
     p2.insert_text((72, 90), "From now on, the youth called a waste would cease to be.", fontsize=11)
     p3 = d.new_page()
-    p3.insert_text((72, 90), "Night deepened, and the city lights came on one by one.", fontsize=11)
+    p3.insert_text((72, 60), "Chapter 3 The Return", fontsize=18)
+    p3.insert_text((72, 90), "He came back to the city where it all began.", fontsize=11)
     fd, pdf2 = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     d.save(pdf2)
     d.close()
     r = extract(pdf2)
     assert r["fmt"] == "pdf"
-    assert len(r["sections"]) >= 2, "无大纲应靠标题启发式切出 >=2 章，实际 %d" % len(r["sections"])
-    titles = " ".join(t for t, _ in r["sections"])
-    assert "Chapter 1" in titles and "Chapter 2" in titles, "章节标题未被识别：%s" % titles
-    # 正文清洗：不应含纯页码行/多余空行
-    for _, x in r["sections"]:
-        assert "\n\n\n" not in x, "清洗未折叠空行"
+    assert r["book_type"] == "novel", "无节多章 → 应为 novel，实际 %s" % r["book_type"]
+    assert len(r["sections"]) >= 3, "应切出 >=3 章，实际 %d" % len(r["sections"])
+    titles = " ".join(s["title"] for s in r["sections"])
+    assert "Chapter 1" in titles and "Chapter 2" in titles and "Chapter 3" in titles, titles
+    # 断言：没有任何一节的正文里还嵌着别的章起点（杜绝"一章文件夹下好几章"）
+    for s in r["sections"]:
+        assert not any(_HEAD_RE.match(ln.strip()) and not _NONCHAPTER_RE.match(ln.strip())
+                        for ln in s["text"].split("\n")), \
+            "正文内仍嵌章起点：%s" % s["title"]
     os.unlink(pdf2)
 
-    # --- 用例3：扫描版（文本层空）→ needs_ocr=True ---
+    # --- 用例3：扫描版（文本层空）→ needs_ocr=True（无 OCR 后端时）---
     d = fitz.open()
     pg = d.new_page()
-    pg.insert_text((72, 72), " ")  # 几乎无文本
+    pg.insert_text((72, 72), " ")
     fd, pdf3 = tempfile.mkstemp(suffix=".pdf")
     os.close(fd)
     d.save(pdf3)
@@ -705,19 +866,21 @@ def selftest():
     assert r["needs_ocr"] is True, "文本层空应标 needs_ocr"
     os.unlink(pdf3)
 
-    # --- 用例4：DOCX → 标题样式切章 + 表格 + 元数据 ---
+    # --- 用例4：DOCX → 标题层级切章/节 + 表格 + 元数据 ---
     try:
         import docx as _dx
         dd = _dx.Document()
         dd.core_properties.title = "Docx Test Book"
         dd.core_properties.author = "John Smith"
         dd.add_heading("第一章 引言", level=1)
-        dd.add_paragraph("这是第一章的示例正文，用于验证 DOCX 抽取。")
+        dd.add_paragraph("这是第一章的示例正文。")
         t = dd.add_table(rows=2, cols=2)
         t.cell(0, 0).text = "项目"
         t.cell(0, 1).text = "说明"
         t.cell(1, 0).text = "A"
         t.cell(1, 1).text = "示例"
+        dd.add_heading("第一节 背景", level=2)
+        dd.add_paragraph("这是第一节的示例正文。")
         dd.add_heading("第二章 方法", level=1)
         dd.add_paragraph("这是第二章的示例正文。")
         fd, docx1 = tempfile.mkstemp(suffix=".docx")
@@ -725,10 +888,9 @@ def selftest():
         dd.save(docx1)
         r = extract(docx1)
         assert r["fmt"] == "docx", r
-        assert len(r["sections"]) >= 2, "DOCX 应靠标题切出 >=2 章，实际 %d" % len(r["sections"])
-        titles = " ".join(t for t, _ in r["sections"])
-        assert "第一章" in titles and "第二章" in titles, titles
-        body = "\n".join(x for _, x in r["sections"])
+        assert r["book_type"] == "textbook", r["book_type"]
+        assert len(r["sections"]) >= 3, "DOCX 应切出 >=3 节，实际 %d" % len(r["sections"])
+        body = "\n".join(s["text"] for s in r["sections"])
         assert "|" in body, "DOCX 表格应转成 md 表格"
         assert r["meta"].get("author") == "John Smith", r["meta"]
         os.unlink(docx1)
@@ -741,25 +903,27 @@ def selftest():
         r = extract(_mobi_sample)
         assert r["fmt"] == "mobi", r
         assert len(r["sections"]) >= 12, "MOBI 应切出多章，实际 %d" % len(r["sections"])
-        titles = " ".join(t for t, _ in r["sections"])
+        titles = " ".join(s["title"] for s in r["sections"])
         assert "CHAPTER I" in titles, "MOBI 章节标题未被识别：%s" % titles[:200]
         assert r["needs_ocr"] is False
         print("  mobi 样本切出 %d 章" % len(r["sections"]))
     else:
         print("  (skipped MOBI 用例：无样本 alice.mobi)")
 
-    print("  selftest passed（大纲切分 / 标题启发式切分 / 扫描版标记 / 清洗 / DOCX / MOBI）。")
+    print("  selftest passed（大纲章含节 / 无大纲多章小说 / 扫描版标记 / DOCX / MOBI / "
+          "防御 re-split）。")
 
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         selftest()
     else:
-        # 简易 CLI：python book_formats.py <file> → 打印章节数 + 前 200 字
         if len(sys.argv) < 2:
             print("usage: python book_formats.py <file> [--selftest]")
             sys.exit(1)
         r = extract(sys.argv[1])
-        print(f"fmt={r['fmt']} pages={r['page_count']} sections={len(r['sections'])} needs_ocr={r['needs_ocr']} meta={r['meta']}")
-        for i, (t, x) in enumerate(r["sections"][:3], 1):
-            print(f"--- [{i}] {t} ({len(x)} chars) ---\n{x[:200]}")
+        print(f"fmt={r['fmt']} pages={r['page_count']} book_type={r['book_type']} "
+              f"sections={len(r['sections'])} needs_ocr={r['needs_ocr']} meta={r['meta']}")
+        for i, s in enumerate(r["sections"][:3], 1):
+            print(f"--- [{i}] 章={s['chapter']} 节={s['section']} ({len(s['text'])} chars) ---\n"
+                  f"{s['text'][:200]}")

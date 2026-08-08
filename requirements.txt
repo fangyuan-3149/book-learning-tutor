@@ -12,6 +12,13 @@ mobi==0.4.1              # MOBI/AZW/AZW3 纯 Python 解包为 HTML（零膨胀�
 
 # ---- 可选（不装也能跑；特定格式 / 站点才需要）----
 # ebooklib>=0.18        # EPUB 后备解析（pymupdf 读不了的 EPUB 启用）
-# 系统需装 djvulibre（djvutxt CLI）才能落 DJVU；pymupdf 轮子大多不含 djvu 解码
+# djvulibre（djvutxt.exe）# DJVU 兜底：放 vendor/djvulibre/ 或系统 PATH（非 pip 包）
 # PyExecJS>=1.5         # @js: / java.* 桥（Node 后端求值；JS 桥源用）
 # curl_cffi>=0.10       # L2-lite TLS 指纹伪装（被动指纹 403 用，待接入 fetcher）
+
+# ---- OCR（扫描版 PDF/DJVU 才需要；均不强制，缺则标 needs_ocr 不崩）----
+# tesseract             # 轻量本地首选：系统装 Tesseract-OCR + chi_sim 中文包（非 pip），
+#                       #           ocr.py 直接调 tesseract CLI，无需 pytesseract
+# MinerU (magic-pdf)    # 重模型但输出结构化 md 直接，最契合规范层：pip install magic-pdf[full]
+# Nougat (nougat-ocr)   # Meta 学术 PDF→md：pip install nougat-ocr
+# 上述三者本机有其一，book_formats 检测到扫描版会自动 OCR；均无则保留 needs_ocr 标记。
