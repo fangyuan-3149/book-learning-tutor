@@ -252,7 +252,18 @@ class SourceEngine:
         text = self._apply_decrypt(text, "Content")
         _, root = _parse_response(text)
         recs = parse_object(self.src.get("ruleContent", {}), root, base=self.base)
-        return recs[0].get("content", "") if recs else ""
+        content = recs[0].get("content", "") if recs else ""
+        if not content or not content.strip():
+            # B-20 兜底：规则抠不出正文时（站改版/规则过期/写错），用通用 HTML
+            # 正文抽取救场，避免返回空正文假成功。仅作最后兜底，不影响正常路径。
+            try:
+                from extract import extract_main_text
+                fb = extract_main_text(text)
+                if fb and fb.strip():
+                    content = fb
+            except Exception:
+                pass
+        return content
 
     def get_content_images(self, chapter_url):
         """漫画模式：返回本章所有图片页的绝对 URL 列表（纯 L1，img src 经 CSS/XPath 取）。"""

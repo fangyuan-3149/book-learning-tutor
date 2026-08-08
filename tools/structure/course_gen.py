@@ -219,7 +219,8 @@ def generate(input_md: str | Path,
         intro_text = _body_text(ch['intro'])
         has_intro = False
         if intro_text and not lessons:
-            lessons = [{'title': '全文', 'body': ch['intro']}]
+            # 整章即一个块、无子节（小说常见）：课名用章标题本身，而非"全文"
+            lessons = [{'title': ch_disp or ch['title'], 'body': ch['intro']}]
         elif intro_text and lessons:
             lessons = [{'title': '本章导言', 'body': ch['intro']}] + lessons
             has_intro = True

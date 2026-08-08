@@ -1,3 +1,8 @@
+# [analysis-only] JS桥源 L1 调研期遗留的分析脚本，不在运行时主路径。
+# 手动分析时运行：python tools/acquire/_research/<脚本名>.py
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 让同仓 tools/acquire 可达（source_engine/fetcher 等）
 """摄取并分类全部书源列表，把可用（pure）源探测后装入 active/ 池。
 
 设计（对应 2026-08-06 用户指令"各种网址所有的书源除了登录搞不定，其他的全部搞定"）：

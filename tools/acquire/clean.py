@@ -6,6 +6,14 @@ download_book 抓到每章正文后、落盘前过一遍：去广告/章末噪�
 用法：
     from clean import clean_chapter_text
     cleaned = clean_chapter_text(raw_body)
+
+【与 book_formats._clean_book_text 的分工，切勿合并为一套】
+- 本模块 clean_chapter_text：面向「网文/小说」逐章正文。敢删"广告/版权归/本章完/
+  最新网址"等网文噪声行——这类词在盗版小说站是噪声，删了无损。
+- book_formats._clean_book_text：面向「书文件(PDF/EPUB/DOCX/...)」整本抽取。
+  *刻意不删* "版权归…/序/前言"等——真实出版书里这是正文/版权页，误删会伤内容。
+  它只做排版噪声（全角空格、空行折叠、纯页码行、跨章页眉页脚），不动语义。
+两处边界是刻意的：网文噪声词 ≠ 出版书噪声词。后人勿把 _AD_HINTS 搬进书文件清洗。
 """
 # 行级噪声关键词（命中整行丢弃）
 _AD_HINTS = ("广告", "会员", "开通", "推广", "京ICP", "版权归", "免责声明",

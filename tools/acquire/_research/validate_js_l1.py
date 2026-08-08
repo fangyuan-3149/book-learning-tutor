@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# [analysis-only] JS桥源 L1 调研期遗留的分析脚本，不在运行时主路径。
+# 手动分析时运行：python tools/acquire/_research/<脚本名>.py
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 让同仓 tools/acquire 可达（source_engine/fetcher 等）
 """离线验证：JS 桥源转纯 L1 的端到端链路（无需浏览器、无需真实域名）。
 用一个 mock fetcher 返回 AES 加密的 JSON，验证：
   (1) searchUrl 的 {{java.md5Encode(key)}} 签名展开

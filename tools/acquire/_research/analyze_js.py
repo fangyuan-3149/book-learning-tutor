@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# [analysis-only] JS桥源 L1 调研期遗留的分析脚本，不在运行时主路径。
+# 手动分析时运行：python tools/acquire/_research/<脚本名>.py
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 让同仓 tools/acquire 可达（source_engine/fetcher 等）
 """
 analyze_js.py — 量化 js_candidates.json 里 JS 桥源实际用到的 java.* 方法与加密配置。
 输出：各方法调用次数、加密 (alg,key,mode,iv) 去重清单、含 JS 的规则字段分布。
