@@ -3,11 +3,11 @@
 """
 book_formats.py — 多格式书籍 → 纯文本章节（授业格式层 v2）
 
-把 PDF / EPUB / MOBI / DJVU / TXT / MD 抽成 (title, text) 章节列表，
-写入 参考/<书名>/NNNN_title.txt，供现有 convert → course_gen 消费
-（convert 契约：参考/<书名>/[0-9]{4}_*.txt 每个文件 = 一节）。
+把 PDF / EPUB / MOBI / AZW / AZW3 / DJVU / DOCX / TXT / MD 抽成
+(title, text) 章节列表，写入 参考/<书名>/NNNN_title.txt，供现有
+convert → course_gen 消费（convert 契约：参考/<书名>/[0-9]{4}_*.txt 每个文件 = 一节）。
 
-v2 相对 v1 的优化（"把格式转换做好"）：
+v2（"把格式转换做好"）：
   - PDF 无大纲时改用「字体大小 + 标题正则」启发式切章，不再退化为逐页"第N页"；
     抓不到章节标题时再退回整本按正则标题切，最后才逐页（保留旧行为）。
   - 抽出的正文统一过 _clean_book_text：全角空格→半角、折叠多余空行、
@@ -15,10 +15,21 @@ v2 相对 v1 的优化（"把格式转换做好"）：
   - 从 PDF/EPUB 元数据取 书名/作者 写入 meta，供 convert 课头与 _meta.json 使用。
   - 扫描版（文本层稀疏）仍只标 needs_ocr，不强制 OCR（重依赖留待用户本机）。
 
+v3（"DOCX / MOBI 导入完善"）：
+  - 新增 DOCX：python-docx 读（标题样式→章节边界；表格→md 表格；按文档顺序保留
+    段落与表格）；从 core_properties 取 书名/作者。
+  - 新增 MOBI / AZW / AZW3：纯 Python 的 `mobi` 库解包出底层 HTML（零膨胀，不捆绑
+    calibre），BeautifulSoup 取文本后复用 _split_text_by_headings 切章；若 `mobi`
+    未装，则兜底调用 calibre 的 ebook-convert 转 EPUB 再走 EPUB 路径。
+
 依赖（按需懒加载，缺哪个报哪个，不强制全装）：
   - pymupdf (fitz)   ：PDF / EPUB / FB2 / 图片 文本层抽取（首选，已装）
-  - ebooklib         ：EPUB/MOBI 兜底（MOBI 用 ebooklib 读，文本从 HTML 抽）
+  - ebooklib         ：EPUB 兜底解析（PyMuPDF 失败时用）
+  - python-docx      ：DOCX 读取（标题/表格/元数据），已装
+  - mobi (0.4.1)     ：MOBI/AZW/AZW3 解包为 HTML，已装
+  - beautifulsoup4   ：EPUB/MOBI 的 HTML 清洗，已装
   - djvulibre(djvutxt CLI) ：DJVU 兜底（PyMuPDF wheel 通常不含 djvu）
+  - calibre(ebook-convert) ：MOBI 兜底转换（可选，未装则 MOBI 走 mobi 库）
   - OCR（扫描版 PDF）：可选。检测到文本层稀疏 → 标记 needs_ocr，不强制
                        MinerU / tesseract；留给用户本机有 OCR 时再补。
 
@@ -53,10 +64,11 @@ _PAGENUM_RE = re.compile(r"^[\-–—]?\s*\d{1,4}\s*[\-–—]?$")
 
 
 def detect_format(path):
-    """返回 'pdf' / 'epub' / 'mobi' / 'djvu' / 'txt' / 'md' / 'unknown'。"""
+    """返回 'pdf' / 'epub' / 'mobi' / 'azw' / 'azw3' / 'djvu' / 'docx' /
+    'txt' / 'md' / 'unknown'。"""
     p = Path(path)
     ext = p.suffix.lower().lstrip(".")
-    if ext in ("pdf", "epub", "mobi", "djvu", "txt", "md"):
+    if ext in ("pdf", "epub", "mobi", "azw", "azw3", "djvu", "docx", "txt", "md"):
         return ext
     # 无扩展名 / 未知 → 用 magic 兜底
     try:
@@ -65,7 +77,7 @@ def detect_format(path):
         return "unknown"
     if head.startswith(b"%PDF"):
         return "pdf"
-    if head.startswith(b"PK\x03\x04"):  # epub/mobi 都是 zip 容器，靠扩展名区分不了
+    if head.startswith(b"PK\x03\x04"):  # epub/mobi/azw 都是 zip 容器，靠扩展名区分
         return "unknown"
     if head.startswith(b"FORM\x00\x00\x00\x0cDJVU"):
         return "djvu"
@@ -99,6 +111,29 @@ def _looks_like_heading(txt, maxsz, body_size):
     return False
 
 
+def _drop_empty_sections(sections):
+    """丢弃空正文章节（多为 EPUB/MOBI 的目录 TOC 占位项），保留 >=1 个。"""
+    out = [(t, x) for t, x in sections if x.strip()]
+    return out if out else sections
+
+
+def _drop_toc_like_sections(sections):
+    """丢弃"正文过短"的疑似目录(TOC)/许可证样板项。
+
+    EPUB/MOBI 常在正文前有一份目录：每个章节标题后仅跟副标题几个字（无正文），
+    与真正的章节（数千字）重复。真实章节绝不会 <200 字，故以
+    max(200, 2%*中位数) 为阈值丢弃短项；若全部丢弃则回退原列表。
+    """
+    import statistics
+    if len(sections) < 3:
+        return sections
+    bodies = [len(x) for _, x in sections]
+    med = statistics.median(bodies) if bodies else 0
+    thr = max(200, int(0.02 * med)) if med > 0 else 200
+    out = [(t, x) for t, x in sections if len(x) >= thr]
+    return out if out else sections
+
+
 def _split_text_by_headings(text):
     """整本纯文本按标题正则切章；不足 2 个标题返回 None（交给调用方降级）。"""
     lines = text.split("\n")
@@ -111,7 +146,7 @@ def _split_text_by_headings(text):
         title = lines[start].strip()
         body = "\n".join(lines[start + 1:end]).strip()
         sections.append((title, body))
-    return sections
+    return _drop_toc_like_sections(_drop_empty_sections(sections))
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +417,176 @@ def _text_sections(path, is_md=False):
 
 
 # ---------------------------------------------------------------------------
+# DOCX（python-docx：标题样式→章节；表格→md；按文档顺序保留段落/表格）
+# ---------------------------------------------------------------------------
+def _iter_block_items(parent):
+    """按文档顺序产出 段落/表格 块级元素（保留二者相对顺序，教科书表格不丢）。"""
+    from docx.document import Document as _Doc
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    if isinstance(parent, _Doc):
+        elem = parent.element.body
+    elif isinstance(parent, Table):
+        elem = parent._tbl
+    else:
+        elem = parent._tc  # _Cell
+    for child in elem.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, parent)
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, parent)
+
+
+def _docx_table_to_md(table):
+    """表格 → markdown 表格（保留结构，供课程化消费）。"""
+    rows = []
+    for r in table.rows:
+        cells = [c.text.strip().replace("\n", " ").replace("|", "/") for c in r.cells]
+        rows.append(cells)
+    if not rows:
+        return ""
+    ncol = len(rows[0])
+    out = ["| " + " | ".join(rows[0]) + " |"]
+    if len(rows) >= 2:
+        out.append("| " + " | ".join(["---"] * ncol) + " |")
+        for r in rows[1:]:
+            out.append("| " + " | ".join(r) + " |")
+    return "\n".join(out)
+
+
+def _is_docx_heading(para):
+    name = (para.style.name or "") if para.style else ""
+    return name.lower().startswith("heading") or name.startswith("标题")
+
+
+def _docx_sections(path):
+    import docx
+    from docx.text.paragraph import Paragraph as _P
+    from docx.table import Table as _T
+    doc = docx.Document(path)
+    meta = {}
+    cp = doc.core_properties
+    if getattr(cp, "title", None):
+        meta["title"] = cp.title.strip()
+    if getattr(cp, "author", None):
+        meta["author"] = cp.author.strip()
+    fallback = meta.get("title") or os.path.splitext(os.path.basename(path))[0]
+    sections = []
+    cur_title = None
+    buf = []
+
+    def flush():
+        nonlocal cur_title, buf
+        if cur_title is not None or buf:
+            sections.append((cur_title or fallback, "\n".join(buf)))
+        cur_title = None
+        buf = []
+
+    for blk in _iter_block_items(doc):
+        if isinstance(blk, _P):
+            txt = blk.text.strip()
+            if _is_docx_heading(blk) and txt:
+                flush()
+                cur_title = txt
+            elif txt:
+                buf.append(txt)
+        elif isinstance(blk, _T):
+            md = _docx_table_to_md(blk)
+            if md:
+                buf.append(md)
+    flush()
+    if not sections:
+        sections = [(fallback, "")]
+    return sections, len(sections), meta
+
+
+# ---------------------------------------------------------------------------
+# MOBI / AZW / AZW3（mobi 库解包为 HTML，零膨胀；兜底 calibre 转 EPUB）
+# ---------------------------------------------------------------------------
+def _mobi_html_to_sections(html_path, fallback_title="全文"):
+    from bs4 import BeautifulSoup
+    try:
+        html = open(html_path, encoding="utf-8", errors="ignore").read()
+    except Exception as e:
+        raise RuntimeError("MOBI 解包后 HTML 读取失败：%s" % e)
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    meta = {}
+    if soup.title and soup.title.string:
+        meta["title"] = soup.title.string.strip()
+    # 尝试从正文抓作者（Gutenberg 等 boilerplate："... by Author"）
+    full0 = soup.get_text("\n")
+    m = re.search(r"Project Gutenberg eBook of .*? by (.+?)[\r\n]", full0)
+    if m:
+        meta["author"] = m.group(1).strip()
+
+    heads = [h for h in soup.find_all(["h1", "h2", "h3"]) if h.get_text(strip=True)]
+    if len(heads) >= 2:
+        # 有 HTML 标题标签 → 按文档顺序的 段落/标题/表格 块切章
+        sections = []
+        cur_title = None
+        buf = []
+        blocks = soup.find_all(["h1", "h2", "h3", "p", "table"])
+        for el in blocks:
+            if el.name in ("h1", "h2", "h3"):
+                if cur_title is not None or buf:
+                    sections.append((cur_title or fallback_title, "\n".join(buf)))
+                cur_title = el.get_text(strip=True)
+                buf = []
+            else:
+                t = el.get_text(strip=True)
+                if t:
+                    buf.append(t)
+        if cur_title is not None or buf:
+            sections.append((cur_title or fallback_title, "\n".join(buf)))
+        secs = _drop_toc_like_sections(_drop_empty_sections(sections))
+        return secs, len(secs), meta
+
+    # 无 HTML 标题标签 → 整本文本按标题正则切（覆盖 Alice 这类 "CHAPTER I." 起步）
+    full = soup.get_text("\n")
+    sub = _split_text_by_headings(full)
+    if sub:
+        return sub, len(sub), meta
+    return [(meta.get("title") or fallback_title, full.strip())], 1, meta
+
+
+def _mobi_sections(path):
+    # 1) 纯 Python 的 mobi 库解包（零膨胀，首选）
+    try:
+        import mobi
+        _td, html_path = mobi.extract(path)
+        return _mobi_html_to_sections(
+            html_path, fallback_title=os.path.splitext(os.path.basename(path))[0])
+    except ImportError:
+        pass
+    # 2) 兜底：calibre ebook-convert 转 EPUB → 走 EPUB 路径
+    ec = shutil.which("ebook-convert") or shutil.which("ebook-convert.exe")
+    if ec:
+        import tempfile as _tf
+        fd, epub = _tf.mkstemp(suffix=".epub")
+        os.close(fd)
+        try:
+            subprocess.run([ec, path, epub], capture_output=True, text=True,
+                           timeout=180, check=True)
+        except Exception as e:
+            raise RuntimeError("calibre ebook-convert 转换失败：%s" % e)
+        try:
+            return _epub_sections(epub)
+        finally:
+            try:
+                os.unlink(epub)
+            except Exception:
+                pass
+    raise RuntimeError(
+        "MOBI/AZW 抽取失败：需要 `mobi` 库或 calibre。\n"
+        "  推荐：pip install mobi   （纯 Python 零膨胀）\n"
+        "  或安装 calibre，ebook-convert 会自动把 MOBI 转 EPUB 再抽取。")
+
+
+# ---------------------------------------------------------------------------
 # 统一入口
 # ---------------------------------------------------------------------------
 def extract(path, fmt=None):
@@ -410,13 +615,14 @@ def extract(path, fmt=None):
         sections, n, meta0 = _text_sections(path, is_md=False)
     elif fmt == "md":
         sections, n, meta0 = _text_sections(path, is_md=True)
-    elif fmt == "mobi":
-        raise RuntimeError(
-            "MOBI 暂不直接支持。请用 calibre 转成 EPUB 后再 ingest：\n"
-            "  ebook-convert book.mobi book.epub")
+    elif fmt == "docx":
+        sections, n, meta0 = _docx_sections(path)
+    elif fmt in ("mobi", "azw", "azw3"):
+        sections, n, meta0 = _mobi_sections(path)
     else:
         raise RuntimeError(
-            f"不支持的格式：{fmt}（{path}）。支持 pdf/epub/djvu/txt/md；MOBI 请先转 EPUB。")
+            f"不支持的格式：{fmt}（{path}）。"
+            "支持 pdf/epub/mobi/azw/azw3/djvu/docx/txt/md。")
 
     # 清洗：通用书本清洗 + 去跨页页眉页脚
     clean = [(t, _clean_book_text(x)) for t, x in sections]
@@ -499,7 +705,50 @@ def selftest():
     assert r["needs_ocr"] is True, "文本层空应标 needs_ocr"
     os.unlink(pdf3)
 
-    print("  selftest passed（大纲切分 / 标题启发式切分 / 扫描版标记 / 清洗）。")
+    # --- 用例4：DOCX → 标题样式切章 + 表格 + 元数据 ---
+    try:
+        import docx as _dx
+        dd = _dx.Document()
+        dd.core_properties.title = "Docx Test Book"
+        dd.core_properties.author = "John Smith"
+        dd.add_heading("第一章 引言", level=1)
+        dd.add_paragraph("这是第一章的示例正文，用于验证 DOCX 抽取。")
+        t = dd.add_table(rows=2, cols=2)
+        t.cell(0, 0).text = "项目"
+        t.cell(0, 1).text = "说明"
+        t.cell(1, 0).text = "A"
+        t.cell(1, 1).text = "示例"
+        dd.add_heading("第二章 方法", level=1)
+        dd.add_paragraph("这是第二章的示例正文。")
+        fd, docx1 = tempfile.mkstemp(suffix=".docx")
+        os.close(fd)
+        dd.save(docx1)
+        r = extract(docx1)
+        assert r["fmt"] == "docx", r
+        assert len(r["sections"]) >= 2, "DOCX 应靠标题切出 >=2 章，实际 %d" % len(r["sections"])
+        titles = " ".join(t for t, _ in r["sections"])
+        assert "第一章" in titles and "第二章" in titles, titles
+        body = "\n".join(x for _, x in r["sections"])
+        assert "|" in body, "DOCX 表格应转成 md 表格"
+        assert r["meta"].get("author") == "John Smith", r["meta"]
+        os.unlink(docx1)
+    except ImportError:
+        print("  (skipped DOCX 用例：python-docx 未装)")
+
+    # --- 用例5：MOBI（用预下载样本；无样本则跳过）---
+    _mobi_sample = os.path.join(tempfile.gettempdir(), "alice.mobi")
+    if os.path.exists(_mobi_sample):
+        r = extract(_mobi_sample)
+        assert r["fmt"] == "mobi", r
+        assert len(r["sections"]) >= 12, "MOBI 应切出多章，实际 %d" % len(r["sections"])
+        titles = " ".join(t for t, _ in r["sections"])
+        assert "CHAPTER I" in titles, "MOBI 章节标题未被识别：%s" % titles[:200]
+        assert r["needs_ocr"] is False
+        print("  mobi 样本切出 %d 章" % len(r["sections"]))
+    else:
+        print("  (skipped MOBI 用例：无样本 alice.mobi)")
+
+    print("  selftest passed（大纲切分 / 标题启发式切分 / 扫描版标记 / 清洗 / DOCX / MOBI）。")
 
 
 if __name__ == "__main__":

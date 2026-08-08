@@ -116,7 +116,7 @@ def convert(book_name):
 
 
 # 目录模式下只认这些"真书"格式，避免把项目里的 .md/.txt/venv 误吸进 参考/
-_BOOK_EXTS = {".pdf", ".epub", ".djvu", ".mobi"}
+_BOOK_EXTS = {".pdf", ".epub", ".djvu", ".mobi", ".azw", ".azw3", ".docx"}
 # 目录递归时跳过的噪声目录（含 venv / 仓库元数据 / 产物目录）
 _SKIP_DIRS = {"venv", ".venv", ".git", "node_modules", "data", "参考", "预处理",
               "书库", ".workbuddy", "__pycache__"}
@@ -127,7 +127,7 @@ def ingest(path, book_name=None):
 
     path 为文件：整本作为一本书（书名=--name 或文件名）。
     path 为目录：目录下（含子目录，跳过 venv/.git/产物等噪声目录）每个
-                 pdf/epub/djvu/mobi 各作为一本书（书名=文件名）。
+                 pdf/epub/djvu/mobi/azw/azw3/docx 各作为一本书（书名=文件名）。
     抽出的章节直接落 参考/<书名>/，下游 convert → course_gen 零改动消费。
     """
     p = Path(path)
@@ -141,7 +141,7 @@ def ingest(path, book_name=None):
             if f.is_file() and f.suffix.lower() in _BOOK_EXTS
             and not any(part in _SKIP_DIRS for part in f.parts))
     if not files:
-        raise SystemExit(f"未找到可抽取的书文件（pdf/epub/djvu/mobi）：{path}")
+        raise SystemExit(f"未找到可抽取的书文件（pdf/epub/djvu/mobi/azw/azw3/docx）：{path}")
     total_sec = 0
     for f in files:
         name = book_name or (p.stem if p.is_file() else f.stem)

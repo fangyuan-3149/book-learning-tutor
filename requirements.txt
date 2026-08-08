@@ -5,8 +5,10 @@
 # ---- 核心（必装，格式层 + 解析引擎）----
 pymupdf==1.28.2          # PDF / EPUB / DJVU 解析主力（book_formats.extract）
 httpx==0.28.1            # 获取层 HTTP 客户端（fetcher，注意 0.28 移除 proxies=）
-beautifulsoup4==4.15.0   # HTML 解析（rules.py 选择器后端）
+beautifulsoup4==4.15.0   # HTML 解析（rules.py 选择器后端 + MOBI 解包后清洗）
 lxml==6.1.1              # bs4 的 XPath 解析后端
+python-docx==1.2.0       # DOCX 读取（标题/表格/元数据）
+mobi==0.4.1              # MOBI/AZW/AZW3 纯 Python 解包为 HTML（零膨胀，不捆绑 calibre）
 
 # ---- 可选（不装也能跑；特定格式 / 站点才需要）----
 # ebooklib>=0.18        # EPUB 后备解析（pymupdf 读不了的 EPUB 启用）
