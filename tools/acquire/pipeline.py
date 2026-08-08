@@ -133,7 +133,7 @@ def convert(book_name):
             body = ""
             fpath = src_dir / e["file"]
             if fpath.exists():
-                body = html_to_text(fpath.read_text(encoding="utf-8"))
+                body = _sanitize_body(html_to_text(fpath.read_text(encoding="utf-8")))
             if e.get("section"):
                 parts.append(f"## {_strip_num_prefix(e['section'])}\n\n{body}\n")  # 节：二级
             else:
@@ -152,6 +152,15 @@ def _strip_num_prefix(title):
     """去掉标题首部『第N章/节/课』编号词（避免与 course_gen 自动加的 第XX章 重复）。"""
     return re.sub(r"^第[0-9零一二三四五六七八九十百千]+\s*[章章节节节课部分段篇]\s*",
                   "", (title or "")).strip()
+
+
+def _sanitize_body(text):
+    """正文内若以 '#' 起头（如 Python 代码清单注释 '# File: chaos.py'、被 pymupdf
+    抽进正文的页眉），会被下游 course_gen 误判为 markdown 标题→垃圾章。转义行首 '#'
+    为 '\\#'（渲染为字面 '#'，不触发标题），既保真又消除垃圾章。"""
+    if not text:
+        return ""
+    return re.sub(r"(?m)^#", r"\\#", text)
 
 
 # 目录模式下只认这些"真书"格式，避免把项目里的 .md/.txt/venv 误吸进 参考/

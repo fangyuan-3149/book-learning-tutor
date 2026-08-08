@@ -107,6 +107,42 @@ def _strip_num_prefix(title):
                   "", (title or "")).strip()
 
 
+_CJK_RE = re.compile(r"[㐀-鿿一-鿿豈-﫿]")
+
+
+def _is_cjk(ch):
+    return bool(_CJK_RE.match(ch)) if ch else False
+
+
+def _collapse_cjk_spacing(title):
+    """折叠 PDF 大纲书签里常见的『字距』空格（如 '数 字 计 算'→'数字计算'、
+    '版 权 声 明'→'版权声明'、'前    言'→'前言'）。
+
+    判定：删除两个 CJK 字符之间的空格，当且仅当该空格两侧的字符中**至少一个**的
+    另一侧也是空格/边界（即处于"逐字隔开"的字距串中）。这样只吃字距，保留合法的
+    单空格（如 '第一节 自然数' 中 节↔自 之间的空格，其两侧字符的另一侧都是正常
+    汉字，不会被吃）。不改变语义、不破坏 '第N章' 与正文的间隔。
+    """
+    if not title:
+        return title
+    # 先把 2+ 连续空白折叠成单个空格（'前    言'→'前 言'，'定  义  类'→'定 义 类'），
+    # 否则双空格会让下方字距判定漏掉中间的空格。
+    title = re.sub(r"\s{2,}", " ", title)
+    chars = list(title)
+    n = len(chars)
+    out = []
+    for i, ch in enumerate(chars):
+        if ch.isspace() and 0 < i < n - 1:
+            prev, nxt = chars[i - 1], chars[i + 1]
+            if _is_cjk(prev) and _is_cjk(nxt):
+                left_ok = (i - 2 < 0) or chars[i - 2].isspace()
+                right_ok = (i + 2 >= n) or chars[i + 2].isspace()
+                if left_ok or right_ok:
+                    continue  # 删掉这个字距空格
+        out.append(ch)
+    return "".join(out)
+
+
 def _needs_ocr(sections, page_count):
     if page_count <= 0:
         return False
@@ -282,25 +318,29 @@ def _pdf_meta(doc):
 
 def _outline_to_triples(toc, doc, n):
     """PDF 大纲 → (chapter, section, text)。lvl<=1 视为章，>=2 视为节（挂当前章）。
-    章正文若内含节起点，再用 _split_hierarchical 细分。"""
+
+    设计铁律：**完全信任大纲**，绝不对 TOC 派生出的正文再跑 _split_hierarchical /
+    _resplit_embedded 二次切分。否则 PDF 每页页眉（"第5章 ……81" 带引导点页码、字距
+    拉开的 "判 断 结 构"）、代码清单标题（"# File: chaos.py"）会被当成"章/节"切出，
+    污染章名并产生大量垃圾章——实测某教材 21 个真实章被炸成 753 章、章名还混进页眉
+    字距版与引导点页码。
+
+    每个 TOC 条目独占一段正文（start→下一条目页之前），章=level<=1，节=level>=2
+    （统一挂到最近一个 level<=1 章名下）。章自身正文即"章首到第一节之前"的引子，
+    不重复子节内容。无大纲的兜底路径（_pdf_sections 下方）仍保留 _split_hierarchical。
+    """
     triples = []
-    cur_chapter = None
+    cur_chapter = "正文"
     for i, (lvl, title, page) in enumerate(toc):
         start = max(0, page - 1)
         end = (toc[i + 1][2] - 1) if i + 1 < len(toc) else n - 1
         end = max(end, start)
         txt = "".join(doc[p].get_text("text") for p in range(start, end + 1))
+        title = _collapse_cjk_spacing((title or "").strip())
         if lvl <= 1:
-            sub = _split_hierarchical(txt)
-            if sub:
-                for (c2, s2, t2) in sub:
-                    triples.append((c2 or title, s2, t2))
-            else:
-                cur_chapter = title
-                triples.append((title, None, txt))
+            cur_chapter = title
+            triples.append((cur_chapter, None, txt))
         else:
-            if cur_chapter is None:
-                cur_chapter = "正文"
             triples.append((cur_chapter, title, txt))
     return _clean_triples(triples)
 
@@ -313,9 +353,14 @@ def _pdf_sections(path):
     meta = _pdf_meta(doc)
     toc = doc.get_toc()  # [[level, title, page(1-based)], ...]
     if toc:
+        # TOC 已是完整层级（章/节/小节）。直接信任大纲，不再对正文跑
+        # _resplit_embedded —— 否则 PDF 每页页眉（"第5章 ……81" 带引导点页码）、
+        # 代码清单标题会被 _HEAD_RE 当成"章"切出，产生大量垃圾章
+        # （实测某教材 21 真实章被炸成 58 章/766 课）。无 TOC 的 fallback 路径
+        # 仍保留 _resplit_embedded 作兜底。
         triples = _outline_to_triples(toc, doc, n)
         doc.close()
-        return _resplit_embedded(triples), n, meta
+        return triples, n, meta
 
     # 无大纲 → 字体大小 + 标题正则 启发式
     body_sizes = []
