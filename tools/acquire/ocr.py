@@ -28,6 +28,19 @@ import tempfile
 # tesseract 语言包：中文+英文（中文需本机装 chi_sim；没有就退英文）
 TESS_LANGS = "chi_sim+eng"
 
+# 项目内 vendor 目录下的本地二进制（无需系统安装 / 不污染 PATH）
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_VENDOR_TESSERACT = os.path.join(_PROJECT_ROOT, "vendor", "tesseract", "tesseract.exe")
+_VENDOR_TESSDATA = os.path.join(_PROJECT_ROOT, "vendor", "tesseract", "tessdata")
+
+
+def _resolve_tesseract():
+    """返回 tesseract 可执行文件路径：优先系统 PATH，其次项目 vendor/tesseract/。"""
+    for cand in (shutil.which("tesseract"), shutil.which("tesseract.exe"), _VENDOR_TESSERACT):
+        if cand and os.path.isfile(cand):
+            return cand
+    return None
+
 
 def _has(cmd):
     return bool(shutil.which(cmd) or shutil.which(cmd + ".exe"))
@@ -36,7 +49,7 @@ def _has(cmd):
 def available_backends():
     """返回本机可用的 OCR 后端列表（按优先级排序）。"""
     out = []
-    if _has("tesseract"):
+    if _resolve_tesseract():
         out.append("tesseract")
     if _has("mineru"):
         out.append("mineru")
@@ -59,10 +72,14 @@ def _ocr_with_tesseract(path, fmt):
     if n <= 0:
         doc.close()
         return None, "空文档"
-    tess = shutil.which("tesseract") or shutil.which("tesseract.exe")
+    tess = _resolve_tesseract()
     if not tess:
         doc.close()
-        return None, "tesseract 未安装（pip 装不了，需系统装 Tesseract-OCR + chi_sim 中文包）"
+        return None, "tesseract 未安装（把 Tesseract-OCR 装到项目 vendor/tesseract/ 或系统 PATH）"
+    # 用项目内 vendor 的 tesseract 时，显式指定 tessdata 目录（中文包已预置）
+    tess_env = None
+    if os.path.abspath(tess) == os.path.abspath(_VENDOR_TESSERACT) and os.path.isdir(_VENDOR_TESSDATA):
+        tess_env = dict(os.environ, TESSDATA_PREFIX=_VENDOR_TESSDATA)
     pages_text = []
     tmpdir = tempfile.mkdtemp(prefix="ocr_tess_")
     try:
@@ -72,7 +89,7 @@ def _ocr_with_tesseract(path, fmt):
             pix.save(img)
             try:
                 r = subprocess.run([tess, img, "stdout", "-l", TESS_LANGS],
-                                   capture_output=True, text=True, timeout=120)
+                                   capture_output=True, text=True, timeout=120, env=tess_env)
                 pages_text.append(r.stdout or "")
             except Exception as e:
                 pages_text.append("")

@@ -762,7 +762,9 @@ def extract(path, fmt=None):
     sections = _drop_running_headers(sections)
 
     # 扫描版判定 + 可选 OCR
-    needs_ocr = _needs_ocr(sections, n) if fmt in ("pdf", "djvu", "epub") else False
+    # EPUB/MOBI/TXT/MD 是重排文本，没有"页"概念，OCR 无意义；
+    # 仅扫描型位图容器 PDF/DJVU 才可能文本层过薄需 OCR。
+    needs_ocr = _needs_ocr(sections, n) if fmt in ("pdf", "djvu") else False
     if needs_ocr and fmt in ("pdf", "djvu"):
         ocr_text, backend = _try_ocr(path, fmt)
         if ocr_text and ocr_text.strip():

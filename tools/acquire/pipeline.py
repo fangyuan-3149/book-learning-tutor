@@ -83,7 +83,10 @@ def search_all(keyword, indices=None, max_workers=6):
 def download(source_name, book_url, book_name=None, max_chapters=None):
     """Step2：按源名找到引擎，下载整本到 参考/<书名>/。max_chapters 可限章数（测试/大书用）。"""
     sources = _all_sources()
-    src = next((s for s in sources if source_name in s.get("bookSourceName", "")), None)
+    # 先精确匹配源名，避免子串误选（如 "笔" 同时命中多个含 "笔" 的源）；
+    # 精确未命中再退回子串（保留用户只打关键字部分的便利）。
+    src = next((s for s in sources if source_name == s.get("bookSourceName", "")), None) \
+        or next((s for s in sources if source_name in s.get("bookSourceName", "")), None)
     if not src:
         raise SystemExit(f"未找到源：{source_name}")
     eng = SourceEngine(src)

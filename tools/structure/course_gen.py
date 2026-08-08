@@ -460,6 +460,20 @@ def selftest(verbose: bool = True) -> bool:
         assert '0 / 5 课' in toc, '目录导读进度计数错误'
         assert '第01章 数与运算' in toc
 
+        # 小说风格：章无子节 → 章本身即一课（覆盖 generate 的「整章无子节」分支）
+        nov = tmp / '测试小说.md'
+        nov.write_text("# 第一章 风起\n\n夜色笼罩着小镇，少年推开了那扇斑驳的木门。\n\n"
+                       "# 第二章 云涌\n\n远方传来战鼓，命运自此转折。\n", encoding='utf-8')
+        nres = generate(nov, out_root=out)
+        assert nres['chapters'] == 2, f"小说章数应为2，实际 {nres['chapters']}"
+        assert nres['lessons'] == 2, f"小说无子节→每章一课，应为2，实际 {nres['lessons']}"
+        nbook = Path(nres['book_dir'])
+        assert (nbook / '第01章_风起' / '第01课_风起.md').exists(), '小说章未成为课'
+        nprog = json.loads((nbook / 'progress.json').read_text(encoding='utf-8'))
+        assert nprog['current'] == '第01章_风起/第01课_风起.md', nprog['current']
+        nles = (nbook / '第01章_风起' / '第01课_风起.md').read_text(encoding='utf-8')
+        assert '夜色笼罩着小镇' in nles, '小说课未保真原文'
+
         # 漫画课程化自测（离线 fixture：假原书目录 + 假图）
         ref = tmp / '漫画书'
         cf = ref / '0001_第一话'

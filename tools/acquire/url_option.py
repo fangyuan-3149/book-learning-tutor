@@ -171,8 +171,6 @@ class UrlOption:
         o = self._clone()
         if self.js:
             try:
-                o.url = js_bridge.eval(self.js, variables={"result": self.url}, extra={"result": self.url})
-            except TypeError:
                 o.url = js_bridge.eval(self.js, variables={"result": self.url})
             except Exception:
                 pass

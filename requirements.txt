@@ -17,8 +17,11 @@ mobi==0.4.1              # MOBI/AZW/AZW3 纯 Python 解包为 HTML（零膨胀�
 # curl_cffi>=0.10       # L2-lite TLS 指纹伪装（被动指纹 403 用，待接入 fetcher）
 
 # ---- OCR（扫描版 PDF/DJVU 才需要；均不强制，缺则标 needs_ocr 不崩）----
-# tesseract             # 轻量本地首选：系统装 Tesseract-OCR + chi_sim 中文包（非 pip），
-#                       #           ocr.py 直接调 tesseract CLI，无需 pytesseract
-# MinerU (magic-pdf)    # 重模型但输出结构化 md 直接，最契合规范层：pip install magic-pdf[full]
-# Nougat (nougat-ocr)   # Meta 学术 PDF→md：pip install nougat-ocr
+# tesseract             # 轻量本地首选。已便携化到 项目/vendor/tesseract/：
+#                       #   以管理员运行 vendor/tesseract/install.ps1 即静默装到项目内（零系统污染），
+#                       #   中文包 chi_sim 已预置 vendor/tesseract/tessdata/。ocr.py 自动发现。
+# MinerU (magic-pdf)    # 重模型、输出结构化 md 直接，最契合规范层。已装入本项目 venv：
+#                       #   pip install magic-pdf[full]；运行时模型权重走 ModelScope（HF 在沙箱不可达）。
+#                       #   ocr.py 自动发现 vendor/mineru 命令；需先 magic-pdf 下载模型。
+# Nougat (nougat-ocr)   # Meta 学术 PDF→md：pip install nougat-ocr（同样需 HF 权重）。
 # 上述三者本机有其一，book_formats 检测到扫描版会自动 OCR；均无则保留 needs_ocr 标记。

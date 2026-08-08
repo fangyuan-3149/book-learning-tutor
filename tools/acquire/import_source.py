@@ -204,7 +204,10 @@ def probe_hosts(hosts, timeout=6, workers=24, verbose=True):
 
 
 def merge_verified(sources, by="bookSourceUrl"):
-    """把可用源并入 verified.json（按 by 去重），返回 (added, pool_size)。"""
+    """把可用源并入 verified.json（按 by 去重），返回 (added, pool_size)。
+
+    原子写：先写同目录临时文件，再 os.replace 落盘，避免半截写入/并发损坏。
+    """
     existing = json.load(open(VERIFIED, encoding="utf-8")) if VERIFIED.exists() else []
     seen = {x.get(by) for x in existing if isinstance(x, dict)}
     added = 0
@@ -214,8 +217,28 @@ def merge_verified(sources, by="bookSourceUrl"):
             existing.append(s)
             seen.add(k)
             added += 1
-    json.dump(existing, open(VERIFIED, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    _atomic_write_json(VERIFIED, existing)
     return added, len(existing)
+
+
+def _atomic_write_json(path, obj):
+    """原子写 JSON：临时文件 + os.replace，防半截写/并发损坏。"""
+    import os as _os
+    import tempfile
+    from pathlib import Path as _Path
+    p = _Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), suffix=".tmp")
+    try:
+        with _os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2)
+        _os.replace(tmp, str(p))
+    except BaseException:
+        try:
+            _os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def run_validation(srcs, kw="斗破苍穹", write=True, workers=12, probe=True,

@@ -59,9 +59,6 @@ def sniff(rule):
     r = rule.strip()
     if r.startswith("<js>") or r.startswith("@js:"):
         return "js"
-    if "{{" in r and not r.startswith("{{"):
-        # 行内插值（非纯 JS 块）按内容判断，交由 evaluate 处理
-        pass
     if r.startswith("@XPath:") or r.startswith("//") or r.startswith("@@"):
         return "xpath"
     if r.startswith("@Json:") or r.startswith("$.") or r.startswith("$[") or r.startswith("@CSS:"):
