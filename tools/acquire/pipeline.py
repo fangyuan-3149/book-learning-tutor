@@ -282,6 +282,7 @@ def figures_to_book(path, book_name=None):
     fig_root.mkdir(parents=True, exist_ok=True)
     index = []
     total = 0
+    dir_counters = {}  # 同 (章,节) 目录跨多个源 section 时，编号持续累加，避免 fig_NNN 互相覆盖
     for sec in f["sections"]:
         ch, secname = sec["chapter"], sec["section"]
         figs = sec["figures"]
@@ -296,12 +297,15 @@ def figures_to_book(path, book_name=None):
         context = sec.get("context") or "\n".join(text_map.get((ch, secname), [])) or ""
         context = context[:800]
         captions = []
-        for j, fg in enumerate(figs, 1):
-            fn = d / ("fig_%03d.%s" % (j, fg["ext"]))
+        for fg in figs:
+            key = str(d)
+            n = dir_counters.get(key, 0) + 1
+            dir_counters[key] = n
+            fn = d / ("fig_%03d.%s" % (n, fg["ext"]))
             fn.write_bytes(fg["bytes"])
             captions.append(fg["caption"])
             index.append({
-                "image": str(fn.relative_to(book_dir)),
+                "image": str(fn.relative_to(book_dir)).replace("\\", "/"),
                 "caption": fg["caption"],
                 "chapter": ch, "section": secname,
                 "context": context,

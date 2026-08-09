@@ -43,6 +43,12 @@ PROGRESS_VERSION = 1
 # 标题前缀「第X章 / 第X节 / 第X课」——文件名叫我们自己的 第XX章 前缀，故剥离避免重复
 _NUM_PREFIX = re.compile(r'^第[0-9零一二三四五六七八九十百千]+[章章节节节课部分段]\s*')
 
+# 顶层书名目录命名必须与管道（pipeline / figures_to_book / inline_figures 用的
+# source_engine._safe）保持一致，否则 figures/inline 按 书库/<书名> 找不到本目录。
+# 注意：只替换非法字符、保留空格，须与 source_engine._safe 同步。
+def _safe_book(name):
+    return re.sub(r'[\\/:*?"<>|]', '_', str(name)).strip() or 'untitled'
+
 
 def strip_number_prefix(title: str) -> str:
     """去掉标题首部的『第N章/节/课』编号词（仅用于文件名，目录导读保留原文）。"""
@@ -199,7 +205,7 @@ def generate(input_md: str | Path,
     chapters = organize(root, chapter_level, lesson_level)
 
     out_root = Path(out_root)
-    book_dir = out_root / book
+    book_dir = out_root / _safe_book(book_name)
 
     # 收集课（相对路径 + 摘要）
     lesson_entries = []  # (rel_path, chapter_title, lesson_title, summary, body_text)
@@ -274,7 +280,7 @@ def generate(input_md: str | Path,
 
     if dry_run:
         return {
-            'book': book,
+            'book': _safe_book(book_name),
             'book_dir': str(book_dir),
             'chapters': len(chapters),
             'lessons': total,
@@ -323,7 +329,7 @@ def generate_comic(ref_dir: str | Path,
         book_name = ref.name
     book = sanitize(book_name)
     out_root = Path(out_root)
-    book_dir = out_root / book
+    book_dir = out_root / _safe_book(book_name)
 
     # 章文件夹：按前导编号排序
     ch_folders = sorted(

@@ -11,7 +11,7 @@ python-docx==1.2.0       # DOCX 读取（标题/表格/元数据）
 mobi==0.4.1              # MOBI/AZW/AZW3 纯 Python 解包为 HTML（零膨胀，不捆绑 calibre）
 
 # ---- 可选（不装也能跑；特定格式 / 站点才需要）----
-# ebooklib>=0.18        # EPUB 后备解析（pymupdf 读不了的 EPUB 启用）
+ebooklib>=0.18          # EPUB 文本解析主用（pymupdf 对 EPUB3 常解析不出 TOC，仅作后备）
 # djvulibre（djvutxt.exe）# DJVU 兜底：放 vendor/djvulibre/ 或系统 PATH（非 pip 包）
 # PyExecJS>=1.5         # @js: / java.* 桥（Node 后端求值；JS 桥源用）
 # curl_cffi>=0.10       # L2-lite TLS 指纹伪装（被动指纹 403 用，待接入 fetcher）

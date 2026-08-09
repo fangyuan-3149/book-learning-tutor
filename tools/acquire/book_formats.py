@@ -515,6 +515,77 @@ def _pdf_sections(path):
 # EPUB（pymupdf 优先；失败回退 ebooklib）
 # ---------------------------------------------------------------------------
 def _epub_sections(path):
+    """EPUB 章节抽取。
+
+    优先 ebooklib（原生解析 EPUB2/3 的 spine 与 nav，按 XHTML 文档逐章切分更准，
+    且不会因 EPUB3 的 epub:| 命名空间 CSS 选择器向 stderr 喷语法错）；
+    PyMuPDF 仅作后备（它对 EPUB3 常解析不出 TOC，退化成整本一个文本块）。
+    """
+    # —— 主：ebooklib（EPUB 原生解析）——
+    try:
+        import ebooklib
+        from ebooklib import epub
+        from bs4 import BeautifulSoup
+        book = epub.read_epub(path)
+        meta = {}
+        try:
+            t = book.get_metadata("DC", "title")
+            a = book.get_metadata("DC", "creator")
+            if t:
+                meta["title"] = t[0][0].strip()
+            if a:
+                meta["author"] = a[0][0].strip()
+        except Exception:
+            pass
+        # 从 EPUB nav 目录取 (title, href) 映射，给每个文档定章名（比只取文档内首个
+        # 标题更准，且能区分 Chapter 1/2/...；front/back matter 也能拿到 Titlepage 等）。
+        toc_links = []
+        def _flat(toc):
+            for e in toc:
+                if isinstance(e, epub.Link):
+                    toc_links.append(e)
+                elif isinstance(e, (tuple, list)) and e:
+                    if isinstance(e[0], epub.Link):
+                        toc_links.append(e[0])
+                    if len(e) > 1:
+                        _flat(e[1])
+        try:
+            _flat(book.toc)
+        except Exception:
+            pass
+        href2title = {}
+        for ln in toc_links:
+            base = (ln.href or "").split("#")[0]
+            if base and base not in href2title:
+                href2title[base] = (ln.title or "").strip()
+        triples = []
+        for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+            soup = BeautifulSoup(item.get_content(), "html.parser")
+            for tag in soup(["script", "style"]):
+                tag.decompose()
+            doc_base = item.get_name().split("/")[-1]
+            chap = None
+            for k, v in href2title.items():
+                if k.split("/")[-1] == doc_base and v:
+                    chap = v
+                    break
+            if not chap:
+                h = soup.find(["h1", "h2", "h3"])
+                chap = h.get_text(" ", strip=True) if h else None
+            chap = chap or meta.get("title") or "正文"
+            txt = soup.get_text("\n")
+            txt = "\n".join(ln.strip() for ln in txt.splitlines() if ln.strip())
+            sub = _split_hierarchical(txt)
+            if sub:
+                for (c, s, t) in sub:
+                    triples.append((c or chap, s, t))
+            else:
+                triples.append((chap, None, txt))
+        if triples:
+            return _resplit_embedded(_clean_triples(triples)), len(triples), meta
+    except Exception:
+        pass
+    # —— 后备：PyMuPDF ——
     try:
         import pymupdf as fitz
         doc = fitz.open(path)
@@ -531,43 +602,8 @@ def _epub_sections(path):
         if sub:
             return _resplit_embedded(sub), n, meta
         return [(meta.get("title") or "全文", None, full)], n, meta
-    except Exception:
-        pass
-    try:
-        import ebooklib
-        from ebooklib import epub
-        from bs4 import BeautifulSoup
     except Exception as e:
-        raise RuntimeError("EPUB 抽取需 pymupdf 或 ebooklib+bs4，均缺失：%s" % e)
-    book = epub.read_epub(path)
-    meta = {}
-    try:
-        t = book.get_metadata("DC", "title")
-        a = book.get_metadata("DC", "creator")
-        if t:
-            meta["title"] = t[0][0].strip()
-        if a:
-            meta["author"] = a[0][0].strip()
-    except Exception:
-        pass
-    triples = []
-    cur_chapter = None
-    for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
-        soup = BeautifulSoup(item.get_content(), "html.parser")
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-        txt = soup.get_text("\n")
-        txt = "\n".join(ln.strip() for ln in txt.splitlines() if ln.strip())
-        sub = _split_hierarchical(txt)
-        if sub:
-            for (c, s, t) in sub:
-                # EPUB 单文档可能跨多章；用 sub 的章（若 None 退回当前章）
-                cur_chapter = c or cur_chapter
-                triples.append((cur_chapter or c or "正文", s, t))
-        else:
-            cur_chapter = cur_chapter or meta.get("title") or "正文"
-            triples.append((cur_chapter, None, txt))
-    return _resplit_embedded(_clean_triples(triples)), len(triples), meta
+        raise RuntimeError("EPUB 抽取需 ebooklib 或 pymupdf，均失败：%s" % e)
 
 
 # ---------------------------------------------------------------------------
