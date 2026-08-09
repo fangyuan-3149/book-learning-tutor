@@ -171,7 +171,7 @@ def organize(root: dict, chapter_level: int, lesson_level: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 # 文件名清洗
 # ---------------------------------------------------------------------------
-def sanitize(name: str, maxlen: int = 40) -> str:
+def sanitize(name: str, maxlen: int = 120) -> str:
     name = (name or '').strip()
     name = ILLEGAL_RE.sub('_', name)
     name = re.sub(r'\s+', '_', name)  # 空白压成单下划线，路径稳定
@@ -268,6 +268,10 @@ def generate(input_md: str | Path,
             'mastery': 0,
             'unresolved': [],
             'quiz': [],
+            # 全章/全课标题：供 inline 全标题匹配，彻底解耦文件名截断（避免 40 字符截断
+            # 导致的目录碰撞 / 子串误绑）。向后兼容：旧 progress.json 缺此字段时 inline 退回截断目录名。
+            'chapter': e['chapter'],
+            'lesson': e['lesson'],
         }
     progress = {
         'version': PROGRESS_VERSION,
@@ -362,7 +366,9 @@ def generate_comic(ref_dir: str | Path,
     toc_text = '\n'.join(toc_lines).rstrip() + '\n'
 
     lessons_map = {e['rel']: {'status': 'unstarted', 'mastery': 0,
-                              'unresolved': [], 'quiz': []} for e in lesson_entries}
+                              'unresolved': [], 'quiz': [],
+                              'chapter': e['chapter'], 'lesson': e['lesson']}
+                   for e in lesson_entries}
     progress = {'version': PROGRESS_VERSION, 'book': book_name,
                 'current': lesson_entries[0]['rel'] if lesson_entries else None,
                 'total_lessons': total, 'updated': None, 'lessons': lessons_map,

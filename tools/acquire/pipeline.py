@@ -254,8 +254,12 @@ def ingest(path, book_name=None, cbz_chunks=None):
 
 
 
-def _fig_dirname(name, maxlen=40):
-    """插图目录名清洗（与 course_gen.sanitize 同策略：去非法字符、空白压成下划线）。"""
+def _fig_dirname(name, maxlen=120):
+    """插图目录名清洗（与 course_gen.sanitize 同策略：去非法字符、空白压成下划线）。
+
+    maxlen 提到 120：降低长章/节名清洗后前 N 字相同导致的目录碰撞概率；残留的极端碰撞
+    由 figures_to_book 的 occ 序号兜底（见 figures_to_book）。
+    """
     import re as _re
     name = (name or "").strip()
     name = _re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", name)
@@ -327,6 +331,7 @@ def figures_to_book(path, book_name=None):
     index = []
     total = 0
     dir_counters = {}  # 同 (章,节) 目录跨多个源 section 时，编号持续累加，避免 fig_NNN 互相覆盖
+    used_dirs = {}     # (ch_san, sec_san) -> 出现次数；不同 (章,节) 清洗后同名时加序号，保证 _figures 目录唯一（防碰撞覆盖）
     for sec in f["sections"]:
         ch, secname = sec["chapter"], sec["section"]
         figs = sec["figures"]
@@ -334,6 +339,12 @@ def figures_to_book(path, book_name=None):
             continue
         ch_san = _fig_dirname(ch or "全书")
         sec_san = _fig_dirname(secname or "全文")
+        key = (ch_san, sec_san)
+        occ = used_dirs.get(key, 0) + 1
+        used_dirs[key] = occ
+        if occ > 1:
+            # 仅当不同 (章,节) 清洗后映射到同一目录名时才加序号，正常名保持干净
+            ch_san = f"{ch_san}_{occ}"
         d = fig_root / ch_san / sec_san
         d.mkdir(parents=True, exist_ok=True)
         # context 直接取自 extract_figures（每个 section 自带，无需再全本抽取兜底）。
@@ -422,7 +433,16 @@ def inline_figures(book_name):
                 cap = caps[idx] if 0 <= idx < len(caps) else None
                 fig_units.append((meta.get("chapter"), meta.get("section"),
                                   cap, meta.get("context", ""), figfile))
-    # 收集 lessons
+    # 收集 lessons：文件系统为准（存在性），全标题取自 progress.json（解耦文件名截断）。
+    # 旧版 progress.json 无 chapter/lesson 字段时退回截断目录名（向后兼容）。
+    prog = None
+    prog_path = book_dir / "progress.json"
+    if prog_path.exists():
+        try:
+            prog = json.loads(prog_path.read_text(encoding="utf-8"))
+        except Exception:
+            prog = None
+    prog_lessons = (prog or {}).get("lessons", {}) if prog else {}
     lessons = []
     for ch_dir in book_dir.iterdir():
         if not ch_dir.is_dir():
@@ -435,7 +455,11 @@ def inline_figures(book_name):
             if f.is_file() and f.name.endswith(".md"):
                 lm = re.match(r"第\d+课_(.+)\.md", f.name)
                 ln = lm.group(1) if lm else f.name[:-3]
-                lessons.append((cn, ln, f))
+                rel = f"{ch_dir.name}/{f.name}"
+                pe = prog_lessons.get(rel, {})
+                ch_full = pe.get("chapter") or cn   # 全章标题优先，缺则退回截断目录名
+                les_full = pe.get("lesson") or ln    # 全课标题优先
+                lessons.append((ch_full, les_full, f))
     if not lessons:
         raise SystemExit(f"书库/{_safe(book_name)}/ 下未找到课程 .md（请先 course_gen）")
     # 先剥离每课已有的配图块（保证可重复执行，figures 重生成后不留孤儿块）
@@ -545,9 +569,97 @@ def selftest():
         t2 = lesson.read_text(encoding="utf-8")
         assert t2.count("## 配图（多模态训练单元）") == 1, "出现重复配图块"
         print("  passed（inline 幂等 + 读 _index.jsonl）")
+        # ---- 长标题解耦场景：course_gen 把章目录名截到 40 字符（旧行为），
+        #      但 progress.json 存【全标题】；figure 的 chapter 也是全标题 → 应精确匹配，
+        #      不依赖截断目录名、也不靠子串回退。证明截断不再影响图文对齐。
+        LONG = ("XIX : How, Though the Sphere Showed Me Other Mysteries of "
+                "Spaceland, I Still Desired More; and What Came of It")
+        # 模拟 course_gen@maxlen=40 的产物（截短目录名，与全标题明显不同；含非法字符清洗）
+        trunc = re.sub(r'[\\/:*?"<>|\r\n\t]+', '_', LONG)
+        trunc = re.sub(r'\s+', '_', trunc).strip('._ ')
+        trunc = trunc[:40].rstrip('._ ')
+        ch_dir2 = book_dir / f"第02章_{trunc}"
+        ch_dir2.mkdir(parents=True, exist_ok=True)
+        lesson2 = ch_dir2 / "第01课_本章.md"
+        lesson2.write_text("# 长标题章\n\n正文。\n", encoding="utf-8")
+        # 写 progress.json（含全标题；注意：此时不含第01章_X 的旧 lesson，模拟真实进度文件）
+        prog = {
+            "version": 1, "book": book, "current": f"第02章_{trunc}/第01课_本章.md",
+            "total_lessons": 1, "updated": None,
+            "lessons": {f"第02章_{trunc}/第01课_本章.md": {
+                "status": "unstarted", "mastery": 0, "unresolved": [], "quiz": [],
+                "chapter": LONG, "lesson": "本章"}}
+        }
+        (book_dir / "progress.json").write_text(
+            json.dumps(prog, ensure_ascii=False), encoding="utf-8")
+        fig_dir2 = fig_root / "第02章_L"
+        fig_dir2.mkdir(parents=True, exist_ok=True)
+        fig_dir2.joinpath("fig_001.png").write_bytes(png)
+        index2 = [{"image": "_figures/第02章_L/fig_001.png", "caption": "长标题图注",
+                   "chapter": LONG, "section": None, "context": "长标题上下文"}]
+        (fig_root / "_index.jsonl").write_text(
+            "\n".join(json.dumps(x, ensure_ascii=False) for x in index2) + "\n", encoding="utf-8")
+        n3 = inline_figures(book)
+        assert n3 == 1, "长标题全标题匹配应插入 1，实际 %d" % n3
+        t3 = lesson2.read_text(encoding="utf-8")
+        assert ("## 配图（多模态训练单元）" in t3 and "长标题图注" in t3), "长标题解耦匹配失效"
+        n4 = inline_figures(book)  # 幂等
+        assert n4 == 1, "长标题二次插入应仍 1（幂等），实际 %d" % n4
+        print("  passed（长标题→全标题解耦匹配，截断不再影响对齐）")
+        # 目录碰撞防护：两章名清洗后前 120 字相同 → 加序号互不覆盖
+        _selftest_figures_collision()
     finally:
         _rmtree_force(book_dir)
     print("  selftest passed。")
+
+
+def _selftest_figures_collision():
+    """验证 figures_to_book 的目录碰撞防护：两章名清洗后前 120 字相同 → 加序号互不覆盖。
+
+    复现真实隐患：教材「Section 3.2: The Gradient Descent Algorithm」与「…with Momentum」
+    清洗后同名 → 若不加防护会映射到同一 _figures/<章>/ 目录，后写覆盖前写（静默损坏）。
+    """
+    import base64
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC")
+    book = "_collide_book"
+    book_dir = ROOT / "书库" / _safe(book)
+    if book_dir.exists():
+        _rmtree_force(book_dir)
+    book_dir.mkdir(parents=True, exist_ok=True)  # 模拟 course_gen 已生成 书库/<书名>/
+    try:
+        real_extract = extract_figures
+
+        def fake_extract(path):
+            same = "A" * 120  # 两章前 120 字完全相同 → 清洗后同名（碰撞）
+            return {
+                "fmt": "pdf", "page_count": 2,
+                "sections": [
+                    {"chapter": same + "X", "section": None, "title": same + "X", "level": 1,
+                     "figures": [{"ext": "png", "width": 1, "height": 1, "bytes": png,
+                                  "caption": "图X", "page": "x"}], "context": "ctxX"},
+                    {"chapter": same + "Y", "section": None, "title": same + "Y", "level": 1,
+                     "figures": [{"ext": "png", "width": 1, "height": 1, "bytes": png,
+                                  "caption": "图Y", "page": "y"}], "context": "ctxY"},
+                ],
+            }
+
+        globals()["extract_figures"] = fake_extract
+        try:
+            figures_to_book(str(book_dir / "dummy.pdf"), book_name=book)
+        finally:
+            globals()["extract_figures"] = real_extract
+        dirs = [d for d in (book_dir / "_figures").iterdir() if d.is_dir()]
+        assert len(dirs) == 2, "碰撞未产生两个独立目录，实际 %d" % len(dirs)
+        for d in dirs:
+            assert (d / "全文" / "fig_001.png").exists(), "缺 fig: %s" % d.name
+        lines = [l for l in (book_dir / "_figures" / "_index.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+        assert len(lines) == 2, "index 应为 2 行，实际 %d" % len(lines)
+        imgs = [json.loads(l)["image"] for l in lines]
+        assert len(set(imgs)) == 2, "两图 image 路径应不同（防覆盖），实际 %r" % imgs
+        print("  passed（figures 目录碰撞防护：同名章加序号互不覆盖）")
+    finally:
+        _rmtree_force(book_dir)
 
 
 def html_to_text(html):
