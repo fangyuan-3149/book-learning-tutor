@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from bs4 import BeautifulSoup
 from source_engine import SourceEngine, load_sources, _safe, REF_DIR, write_robust
-from book_formats import extract as extract_book, unpack_cbz  # 格式层：文本三元组 + CBZ 漫画解包
+from book_formats import extract as extract_book, unpack_cbz, extract_figures  # 格式层：文本三元组 + CBZ 漫画解包 + PDF 插图
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SOURCES_DIR = ROOT / "data" / "sources"
@@ -246,6 +246,73 @@ def ingest(path, book_name=None, cbz_chunks=None):
 
 
 
+def _fig_dirname(name, maxlen=40):
+    """插图目录名清洗（与 course_gen.sanitize 同策略：去非法字符、空白压成下划线）。"""
+    import re as _re
+    name = (name or "").strip()
+    name = _re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", name)
+    name = _re.sub(r'\s+', '_', name).strip('._ ')
+    return name[:maxlen] or "未命名"
+
+
+def figures_to_book(path, book_name=None):
+    """抽取 PDF 插图，对齐进 书库/<书名>/_figures/（按 章/节 归属，自包含多模态单元）。
+
+    每有插图的 (章,节) 建一个目录：fig_NNN.ext + meta.json{chapter,section,title,
+    captions,context(该节正文前 800 字)}；书库/<书名>/_figures/_index.jsonl 汇总每行一个
+    (image,caption,chapter,section,context) 训练对齐单元。需先 ingest→convert→course_gen
+    生成 书库/<书名>/（否则报错指引）。
+    """
+    p = Path(path)
+    name = book_name or p.stem
+    book_dir = ROOT / "书库" / _safe(name)
+    if not book_dir.exists():
+        raise SystemExit(f"未找到 书库/{_safe(name)}/，请先跑完 ingest→convert→course_gen")
+    # 取章节正文（用于 context 摘要）
+    r = extract_book(str(p))
+    text_map = {}
+    for s in r["sections"]:
+        text_map.setdefault((s["chapter"], s["section"]), []).append(s["text"])
+    f = extract_figures(str(p))
+    fig_root = book_dir / "_figures"
+    fig_root.mkdir(parents=True, exist_ok=True)
+    index = []
+    total = 0
+    for sec in f["sections"]:
+        ch, secname = sec["chapter"], sec["section"]
+        figs = sec["figures"]
+        if not figs:
+            continue
+        ch_san = _fig_dirname(ch or "全书")
+        sec_san = _fig_dirname(secname or "全文")
+        d = fig_root / ch_san / sec_san
+        d.mkdir(parents=True, exist_ok=True)
+        context = "\n".join(text_map.get((ch, secname), []))[:800]
+        captions = []
+        for j, fg in enumerate(figs, 1):
+            fn = d / ("fig_%03d.%s" % (j, fg["ext"]))
+            fn.write_bytes(fg["bytes"])
+            captions.append(fg["caption"])
+            index.append({
+                "image": str(fn.relative_to(book_dir)),
+                "caption": fg["caption"],
+                "chapter": ch, "section": secname,
+                "context": context,
+            })
+            total += 1
+        meta = {"chapter": ch, "section": secname, "title": sec["title"],
+                "captions": captions, "context": context, "n_figures": len(figs)}
+        write_robust(d / "meta.json",
+                     json.dumps(meta, ensure_ascii=False, indent=2), label="参考")
+    write_robust(fig_root / "_index.jsonl",
+                 "\n".join(json.dumps(x, ensure_ascii=False) for x in index)
+                 + ("\n" if index else ""), label="参考")
+    print(f"[figures] {p.name} → 书库/{_safe(name)}/_figures/ （{total} 张图，"
+          f"{len(index)} 个对齐单元，{f['page_count']} 页）")
+    return str(fig_root), total
+
+
+
 def detect_format_local(f):
     from book_formats import detect_format
     return detect_format(str(f))
@@ -272,6 +339,7 @@ def main():
     pc = sub.add_parser("convert"); pc.add_argument("name")
     pi = sub.add_parser("ingest"); pi.add_argument("path"); pi.add_argument("--name", default=None)
     pi.add_argument("--chunks", type=int, default=None, help="扁平整包 CBZ 按图片序切成 N 话（仅漫画、且整包无分目录时生效）")
+    pf = sub.add_parser("figures"); pf.add_argument("path"); pf.add_argument("--name", default=None)
     pa = sub.add_parser("all"); pa.add_argument("kw"); pa.add_argument("--idx", type=int, nargs="*"); pa.add_argument("--max", type=int, default=None)
     args = ap.parse_args()
 
@@ -287,6 +355,8 @@ def main():
         print(f"[转md] {out}（{n} 节）")
     elif args.cmd == "ingest":
         ingest(args.path, args.name, cbz_chunks=args.chunks)
+    elif args.cmd == "figures":
+        figures_to_book(args.path, args.name)
     elif args.cmd == "all":
         res, cache = search_all(args.kw, args.idx)
         ok = [r for r in res if r.get("bookUrl") and not r.get("_error")]
