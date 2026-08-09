@@ -439,76 +439,74 @@ def _pdf_sections(path):
     import pymupdf as fitz
     import statistics
     doc = fitz.open(path)
-    n = doc.page_count
-    meta = _pdf_meta(doc)
-    toc = doc.get_toc()  # [[level, title, page(1-based)], ...]
-    if toc:
-        # TOC 已是完整层级（章/节/小节）。直接信任大纲，不再对正文跑
-        # _resplit_embedded —— 否则 PDF 每页页眉（"第5章 ……81" 带引导点页码）、
-        # 代码清单标题会被 _HEAD_RE 当成"章"切出，产生大量垃圾章
-        # （实测某教材 21 真实章被炸成 58 章/766 课）。无 TOC 的 fallback 路径
-        # 仍保留 _resplit_embedded 作兜底。
-        triples = _outline_to_triples(toc, doc, n)
-        doc.close()
+    try:
+        n = doc.page_count
+        meta = _pdf_meta(doc)
+        toc = doc.get_toc()  # [[level, title, page(1-based)], ...]
+        if toc:
+            # TOC 已是完整层级（章/节/小节）。直接信任大纲，不再对正文跑
+            # _resplit_embedded —— 否则 PDF 每页页眉（"第5章 ……81" 带引导点页码）、
+            # 代码清单标题会被 _HEAD_RE 当成"章"切出，产生大量垃圾章
+            # （实测某教材 21 真实章被炸成 58 章/766 课）。无 TOC 的 fallback 路径
+            # 仍保留 _resplit_embedded 作兜底。
+            return _outline_to_triples(toc, doc, n), n, meta
+
+        # 无大纲 → 字体大小 + 标题正则 启发式
+        body_sizes = []
+        for p in range(n):
+            d = doc[p].get_text("dict")
+            for b in d.get("blocks", []):
+                for ln in b.get("lines", []):
+                    for sp in ln.get("spans", []):
+                        if sp.get("text", "").strip():
+                            body_sizes.append(sp.get("size", 0))
+        body_size = statistics.median(body_sizes) if body_sizes else 0
+
+        headings = []  # (page_index_0based, title)
+        for p in range(n):
+            d = doc[p].get_text("dict")
+            for b in d.get("blocks", []):
+                txt = " ".join(
+                    sp.get("text", "") for ln in b.get("lines", [])
+                    for sp in ln.get("spans", [])
+                ).strip()
+                if not txt:
+                    continue
+                sizes = [
+                    sp.get("size", 0) for ln in b.get("lines", [])
+                    for sp in ln.get("spans", []) if sp.get("text", "").strip()
+                ]
+                maxsz = max(sizes) if sizes else 0
+                if _looks_like_heading(txt, maxsz, body_size):
+                    if not headings or not (headings[-1][0] == p and headings[-1][1] == txt):
+                        headings.append((p, txt))
+        if headings:
+            triples = []
+            for i, (pg, title) in enumerate(headings):
+                # 下一章起点页（exclusive）：正文只取到下一章所在页之前，避免把
+                # 下一章标题行并进本章（否则"一章文件夹下塞好几章"）。
+                end_excl = headings[i + 1][0] if i + 1 < len(headings) else n
+                txt = "\n".join(doc[p].get_text("text") for p in range(pg, end_excl))
+                sub = _split_hierarchical(txt)
+                if sub:
+                    for (c2, s2, t2) in sub:
+                        triples.append((c2 or title, s2, t2))
+                else:
+                    triples.append((title, None, txt))
+            return _resplit_embedded(_clean_triples(triples)), n, meta
+
+        # 字体检测无果 → 整本拼接按标题正则切
+        full = "\n".join(doc[p].get_text("text") for p in range(n))
+        sub = _split_hierarchical(full)
+        if sub:
+            return _resplit_embedded(sub), n, meta
+
+        # 完全无结构 → 逐页（保留旧行为，标为单章）
+        sections = [(f"第{p + 1}页", doc[p].get_text("text")) for p in range(n)]
+        triples = [(t, None, x) for t, x in sections]
         return triples, n, meta
-
-    # 无大纲 → 字体大小 + 标题正则 启发式
-    body_sizes = []
-    for p in range(n):
-        d = doc[p].get_text("dict")
-        for b in d.get("blocks", []):
-            for ln in b.get("lines", []):
-                for sp in ln.get("spans", []):
-                    if sp.get("text", "").strip():
-                        body_sizes.append(sp.get("size", 0))
-    body_size = statistics.median(body_sizes) if body_sizes else 0
-
-    headings = []  # (page_index_0based, title)
-    for p in range(n):
-        d = doc[p].get_text("dict")
-        for b in d.get("blocks", []):
-            txt = " ".join(
-                sp.get("text", "") for ln in b.get("lines", [])
-                for sp in ln.get("spans", [])
-            ).strip()
-            if not txt:
-                continue
-            sizes = [
-                sp.get("size", 0) for ln in b.get("lines", [])
-                for sp in ln.get("spans", []) if sp.get("text", "").strip()
-            ]
-            maxsz = max(sizes) if sizes else 0
-            if _looks_like_heading(txt, maxsz, body_size):
-                if not headings or not (headings[-1][0] == p and headings[-1][1] == txt):
-                    headings.append((p, txt))
-    if headings:
-        triples = []
-        for i, (pg, title) in enumerate(headings):
-            # 下一章起点页（exclusive）：正文只取到下一章所在页之前，避免把
-            # 下一章标题行并进本章（否则"一章文件夹下塞好几章"）。
-            end_excl = headings[i + 1][0] if i + 1 < len(headings) else n
-            txt = "\n".join(doc[p].get_text("text") for p in range(pg, end_excl))
-            sub = _split_hierarchical(txt)
-            if sub:
-                for (c2, s2, t2) in sub:
-                    triples.append((c2 or title, s2, t2))
-            else:
-                triples.append((title, None, txt))
+    finally:
         doc.close()
-        return _resplit_embedded(_clean_triples(triples)), n, meta
-
-    # 字体检测无果 → 整本拼接按标题正则切
-    full = "\n".join(doc[p].get_text("text") for p in range(n))
-    sub = _split_hierarchical(full)
-    if sub:
-        doc.close()
-        return _resplit_embedded(sub), n, meta
-
-    # 完全无结构 → 逐页（保留旧行为，标为单章）
-    sections = [(f"第{p + 1}页", doc[p].get_text("text")) for p in range(n)]
-    doc.close()
-    triples = [(t, None, x) for t, x in sections]
-    return triples, n, meta
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +519,19 @@ def _epub_sections(path):
     且不会因 EPUB3 的 epub:| 命名空间 CSS 选择器向 stderr 喷语法错）；
     PyMuPDF 仅作后备（它对 EPUB3 常解析不出 TOC，退化成整本一个文本块）。
     """
+    # DRM 加密 EPUB 直接报错（内容文档加密，抽出来是乱码），与 figures 路径一致。
+    try:
+        import zipfile as _zf
+        with _zf.ZipFile(path) as _zz:
+            if "META-INF/encryption.xml" in _zz.namelist() and _epub_has_content_drm(_zz):
+                raise RuntimeError(
+                    "检测到 DRM 加密 EPUB（内容文档已加密），无法抽取；"
+                    "请改用无 DRM 的合法副本（如 Standard Ebooks / Gutenberg 公版）。")
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
+
     # —— 主：ebooklib（EPUB 原生解析）——
     try:
         import ebooklib
@@ -589,19 +600,19 @@ def _epub_sections(path):
     try:
         import pymupdf as fitz
         doc = fitz.open(path)
-        n = doc.page_count
-        meta = _pdf_meta(doc)
-        toc = doc.get_toc()
-        if toc:
-            triples = _outline_to_triples(toc, doc, n)
+        try:
+            n = doc.page_count
+            meta = _pdf_meta(doc)
+            toc = doc.get_toc()
+            if toc:
+                return _resplit_embedded(_outline_to_triples(toc, doc, n)), n, meta
+            full = "\n".join(doc[p].get_text("text") for p in range(n))
+            sub = _split_hierarchical(full)
+            if sub:
+                return _resplit_embedded(sub), n, meta
+            return [(meta.get("title") or "全文", None, full)], n, meta
+        finally:
             doc.close()
-            return _resplit_embedded(triples), n, meta
-        full = "\n".join(doc[p].get_text("text") for p in range(n))
-        doc.close()
-        sub = _split_hierarchical(full)
-        if sub:
-            return _resplit_embedded(sub), n, meta
-        return [(meta.get("title") or "全文", None, full)], n, meta
     except Exception as e:
         raise RuntimeError("EPUB 抽取需 ebooklib 或 pymupdf，均失败：%s" % e)
 
@@ -623,22 +634,21 @@ def _djvu_sections(path):
     try:
         import pymupdf as fitz
         doc = fitz.open(path)
-        if doc.page_count > 0:
-            n = doc.page_count
-            meta = _pdf_meta(doc)
-            toc = doc.get_toc()
-            if toc:
-                triples = _outline_to_triples(toc, doc, n)
-                doc.close()
-                return _resplit_embedded(triples), n, meta
-            full = "\n".join(doc[p].get_text("text") for p in range(n))
-            sub = _split_hierarchical(full)
-            if sub:
-                doc.close()
-                return _resplit_embedded(sub), n, meta
-            triples = [(f"第{p + 1}页", None, doc[p].get_text("text")) for p in range(n)]
+        try:
+            if doc.page_count > 0:
+                n = doc.page_count
+                meta = _pdf_meta(doc)
+                toc = doc.get_toc()
+                if toc:
+                    return _resplit_embedded(_outline_to_triples(toc, doc, n)), n, meta
+                full = "\n".join(doc[p].get_text("text") for p in range(n))
+                sub = _split_hierarchical(full)
+                if sub:
+                    return _resplit_embedded(sub), n, meta
+                triples = [(f"第{p + 1}页", None, doc[p].get_text("text")) for p in range(n)]
+                return triples, n, meta
+        finally:
             doc.close()
-            return triples, n, meta
     except Exception:
         pass
     djvutxt = _find_djvutxt()
@@ -1397,95 +1407,96 @@ def _epub_figures(path):
     from bs4 import BeautifulSoup
 
     zf = zipfile.ZipFile(path)
-    if "META-INF/encryption.xml" in zf.namelist() and _epub_has_content_drm(zf):
-        zf.close()
-        raise RuntimeError(
-            "检测到 DRM 加密 EPUB（内容文档已加密），无法抽取图文；"
-            "请改用无 DRM 的合法副本（如 Standard Ebooks / Gutenberg 公版）。")
-    manifest, spine, toc_entries = _epub_open(zf)
-    toc_by_doc = {}
-    for (title, base, frag, level) in toc_entries:
-        toc_by_doc.setdefault(base, []).append((level, title))
-    seen = set()
-    sections = []
-    for doc_href in spine:
-        try:
-            html = zf.read(doc_href).decode("utf-8", "ignore")
-        except KeyError:
-            continue
-        soup = BeautifulSoup(html, "html.parser")
-        for tag in soup(["script", "style"]):
-            tag.decompose()
-        entries = toc_by_doc.get(doc_href, [])
-        if entries:
-            top = [e for e in entries if e[0] <= 1]
-            chapter = (top[-1][1] if top else entries[0][1])
-            deepest = max(entries, key=lambda e: e[0])
-            # 章内无独立子节（或子节名与章名相同）→ section 置空，避免 章/节 目录名重复
-            section = deepest[1] if (deepest[0] > 1 and deepest[1] != chapter) else None
-        else:
-            chapter, section = None, None
-        # 文档正文（context，前 4000 字）
-        context = soup.get_text("\n")
-        context = "\n".join(ln.strip() for ln in context.splitlines() if ln.strip())
-        figs = []
-        for el in soup.find_all(["img", "svg"]):
-            if el.name == "svg":
-                # 内联 SVG 矢量图（技术/公版 EPUB 常见，如 Flatland / 数学书插图）。
-                # 无独立二进制，存其 outer XML；矢量不按像素尺寸过滤（有 w/h 属性才粗滤）。
-                data = str(el).encode("utf-8")
-                ext = "svg"
-                mt = ""
-                try:
-                    w = int(re.sub(r"\D", "", str(el.get("width") or "")) or 0)
-                    h = int(re.sub(r"\D", "", str(el.get("height") or "")) or 0)
-                except Exception:
-                    w = h = 0
-                if w and h and w * h < _MIN_FIG_PX:
-                    continue
+    try:
+        if "META-INF/encryption.xml" in zf.namelist() and _epub_has_content_drm(zf):
+            raise RuntimeError(
+                "检测到 DRM 加密 EPUB（内容文档已加密），无法抽取图文；"
+                "请改用无 DRM 的合法副本（如 Standard Ebooks / Gutenberg 公版）。")
+        manifest, spine, toc_entries = _epub_open(zf)
+        toc_by_doc = {}
+        for (title, base, frag, level) in toc_entries:
+            toc_by_doc.setdefault(base, []).append((level, title))
+        seen = set()
+        sections = []
+        for doc_href in spine:
+            try:
+                html = zf.read(doc_href).decode("utf-8", "ignore")
+            except KeyError:
+                continue
+            soup = BeautifulSoup(html, "html.parser")
+            for tag in soup(["script", "style"]):
+                tag.decompose()
+            entries = toc_by_doc.get(doc_href, [])
+            if entries:
+                top = [e for e in entries if e[0] <= 1]
+                chapter = (top[-1][1] if top else entries[0][1])
+                deepest = max(entries, key=lambda e: e[0])
+                # 章内无独立子节（或子节名与章名相同）→ section 置空，避免 章/节 目录名重复
+                section = deepest[1] if (deepest[0] > 1 and deepest[1] != chapter) else None
             else:
-                src = el.get("src")
-                if not src or src.startswith("data:"):
-                    continue
-                rel = posixpath.normpath(
-                    posixpath.join(posixpath.dirname(doc_href), src.split("#")[0]))
-                item = manifest.get(rel)
-                mt = item[1] if item else ""
-                try:
-                    data = zf.read(rel)
-                except KeyError:
+                chapter, section = None, None
+            # 文档正文（context，前 4000 字）
+            context = soup.get_text("\n")
+            context = "\n".join(ln.strip() for ln in context.splitlines() if ln.strip())
+            figs = []
+            for el in soup.find_all(["img", "svg"]):
+                if el.name == "svg":
+                    # 内联 SVG 矢量图（技术/公版 EPUB 常见，如 Flatland / 数学书插图）。
+                    # 无独立二进制，存其 outer XML；矢量不按像素尺寸过滤（有 w/h 属性才粗滤）。
+                    data = str(el).encode("utf-8")
+                    ext = "svg"
+                    mt = ""
                     try:
-                        data = zf.read(src.split("#")[0])
-                    except KeyError:
-                        continue
-                if not data:
-                    continue
-                ext = src.split(".")[-1].split("?")[0].lower() if "." in src else ""
-                if not ext and mt:
-                    ext = mt.split("/")[-1].lower()
-                is_raster = (mt.startswith("image/") and "svg" not in mt) or ext in ("png", "jpeg", "jpg", "gif", "webp")
-                w = h = 0
-                if is_raster:
-                    try:
-                        pm = fitz.Pixmap(data)
-                        w, h = pm.width, pm.height
+                        w = int(re.sub(r"\D", "", str(el.get("width") or "")) or 0)
+                        h = int(re.sub(r"\D", "", str(el.get("height") or "")) or 0)
                     except Exception:
                         w = h = 0
-                    if w * h < _MIN_FIG_PX:
+                    if w and h and w * h < _MIN_FIG_PX:
                         continue
-            digest = hashlib.sha256(data).hexdigest()
-            if digest in seen:
-                continue
-            seen.add(digest)
-            caption = _epub_caption(el)
-            figs.append({"ext": ext, "width": w, "height": h,
-                         "bytes": data, "caption": caption, "page": doc_href})
-        if figs:
-            sections.append({"chapter": chapter, "section": section,
-                             "title": chapter or section or doc_href,
-                             "level": 1 if section is None else 2,
-                             "figures": figs, "context": context[:4000]})
-    zf.close()
+                else:
+                    src = el.get("src")
+                    if not src or src.startswith("data:"):
+                        continue
+                    rel = posixpath.normpath(
+                        posixpath.join(posixpath.dirname(doc_href), src.split("#")[0]))
+                    item = manifest.get(rel)
+                    mt = item[1] if item else ""
+                    try:
+                        data = zf.read(rel)
+                    except KeyError:
+                        try:
+                            data = zf.read(src.split("#")[0])
+                        except KeyError:
+                            continue
+                    if not data:
+                        continue
+                    ext = src.split(".")[-1].split("?")[0].lower() if "." in src else ""
+                    if not ext and mt:
+                        ext = mt.split("/")[-1].lower()
+                    is_raster = (mt.startswith("image/") and "svg" not in mt) or ext in ("png", "jpeg", "jpg", "gif", "webp")
+                    w = h = 0
+                    if is_raster:
+                        try:
+                            pm = fitz.Pixmap(data)
+                            w, h = pm.width, pm.height
+                        except Exception:
+                            w = h = 0
+                        if w * h < _MIN_FIG_PX:
+                            continue
+                digest = hashlib.sha256(data).hexdigest()
+                if digest in seen:
+                    continue
+                seen.add(digest)
+                caption = _epub_caption(el)
+                figs.append({"ext": ext, "width": w, "height": h,
+                             "bytes": data, "caption": caption, "page": doc_href})
+            if figs:
+                sections.append({"chapter": chapter, "section": section,
+                                 "title": chapter or section or doc_href,
+                                 "level": 1 if section is None else 2,
+                                 "figures": figs, "context": context[:4000]})
+    finally:
+        zf.close()
     return {"fmt": "epub", "page_count": len(spine), "sections": sections}
 
 
