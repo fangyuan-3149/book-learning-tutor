@@ -1098,6 +1098,8 @@ _MIN_FIG_PX = 200 * 200  # 小于此面积的图片视为装饰/图标，丢弃�
 _DECOR_ALT = {"cover", "logo", "titlepage", "decorative", "ornament", "bullet",
               "icon", "spacer", "blank", "border", "rule", "background", "header",
               "footer", "separator", "device", "frontispiece", "halftitle", "endpaper"}
+# 签名词：只要 alt 含这些词（即便还有别的词），即判定为装饰（封面/logo/扉页本身无"世界事实"信号）
+_DECOR_SIG = {"logo", "cover", "titlepage", "frontispiece", "halftitle", "endpaper"}
 _DECOR_RE = re.compile(r"[\s,.;:!?()\"'-]+")
 
 
@@ -1109,6 +1111,8 @@ def _is_decorative_alt(alt):
     toks = [t for t in _DECOR_RE.split(a) if t]
     if not toks:
         return True
+    if any(t in _DECOR_SIG for t in toks):
+        return True  # 含 logo/cover 等签名词 → 装饰（如 "The Standard Ebooks logo."）
     # 全部 token 都在装饰集 → 装饰；出现描述性实词 → 非装饰
     return all(t in _DECOR_ALT for t in toks)
 
