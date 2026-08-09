@@ -1093,6 +1093,25 @@ _CAP_RE = re.compile(r"^(图|表|照片|插画|示意图|结构图|流程图|Pla
 _CAP_LOOSE = re.compile(r"图\s*\d|表\s*\d|插画\s*\d|Figure\s*\d|Fig\.?\s*\d|Plate\s*\d|Illustration\s*\d", re.IGNORECASE)
 _MIN_FIG_PX = 200 * 200  # 小于此面积的图片视为装饰/图标，丢弃（降噪）
 
+# 装饰性 alt 词（封面/logo/扉页/分隔/边框等）——这些 alt 不该当图注进训练（噪音）。
+# 公版 EPUB 常把插图说明写进 <img alt>，但封面/logo 的 alt 是装饰词；需要区分。
+_DECOR_ALT = {"cover", "logo", "titlepage", "decorative", "ornament", "bullet",
+              "icon", "spacer", "blank", "border", "rule", "background", "header",
+              "footer", "separator", "device", "frontispiece", "halftitle", "endpaper"}
+_DECOR_RE = re.compile(r"[\s,.;:!?()\"'-]+")
+
+
+def _is_decorative_alt(alt):
+    """判断 alt 是否纯装饰（封面/logo 等）。装饰性 → True（丢弃）。"""
+    a = (alt or "").strip().lower()
+    if not a:
+        return True
+    toks = [t for t in _DECOR_RE.split(a) if t]
+    if not toks:
+        return True
+    # 全部 token 都在装饰集 → 装饰；出现描述性实词 → 非装饰
+    return all(t in _DECOR_ALT for t in toks)
+
 
 def _find_caption(page, blocks, img_bbox):
     """在图片同页下方、或下一页顶部，找第一条像图注的行（图/表/Fig 起头或其内含编号）。
@@ -1168,6 +1187,38 @@ def _pdf_figures(doc, p0, p1, min_px=_MIN_FIG_PX):
     return out
 
 
+def _find_toc_doc(zf, manifest):
+    """定位 TOC 文档：兼容 EPUB3 标准 nav.xhtml、SE 的 toc.xhtml，以及任意 XHTML 内嵌
+    <nav epub:type*="toc">。返回该文档的 zip 内相对路径，找不到返回 None。"""
+    from bs4 import BeautifulSoup
+    # 1) 名字命中：media-type 含 nav / 名为 nav.xhtml / toc.xhtml
+    cands = [h for h, v in manifest.items()
+             if "nav" in (v[1] or "") or h.lower().endswith("nav.xhtml")
+             or h.lower().endswith("toc.xhtml")]
+    if not cands:
+        # 2) 扫描全部 XHTML 找含 toc 的 <nav>
+        for h, v in manifest.items():
+            if not (v[1].endswith("xhtml") or v[1].endswith("html")):
+                continue
+            try:
+                s = BeautifulSoup(zf.read(h).decode("utf-8", "ignore"), "html.parser")
+            except Exception:
+                continue
+            nv = s.find("nav", attrs={"epub:type": lambda x: x and "toc" in x.lower()})
+            if nv:
+                return h
+    # 在候选里挑真正含 toc <nav> 的（避免 nav 是 landmark 而非 toc）
+    for h in cands:
+        try:
+            s = BeautifulSoup(zf.read(h).decode("utf-8", "ignore"), "html.parser")
+        except Exception:
+            continue
+        nv = s.find("nav", attrs={"epub:type": lambda x: x and "toc" in x.lower()})
+        if nv:
+            return h
+    return cands[0] if cands else None
+
+
 def _epub_open(zf):
     """从 EPUB zip 解析 OPF 路径、manifest、spine、TOC 条目。
 
@@ -1211,9 +1262,9 @@ def _epub_open(zf):
     if not spine:  # 兜底：所有 xhtml 文档按名排序
         spine = sorted(h for h, v in manifest.items()
                        if (v[1].endswith("xhtml") or v[1].endswith("html")))
-    # TOC：EPUB3 nav.xhtml 或 EPUB2 toc.ncx
-    nav_href = next((h for h, v in manifest.items()
-                     if "nav" in (v[1] or "") or h.lower().endswith("nav.xhtml")), None)
+    # TOC：优先 manifest 中 nav / nav.xhtml / toc.xhtml；否则扫描全部 XHTML 找
+    # <nav epub:type*="toc">（兼容 Standard Ebooks 的 toc.xhtml 与 EPUB3 标准 nav.xhtml）。
+    nav_href = _find_toc_doc(zf, manifest)
     ncx_href = next((h for h, v in manifest.items()
                      if v[1] == "application/x-dtbncx+xml" or h.lower().endswith(".ncx")), None)
     toc_entries = (_epub_parse_nav(zf, nav_href) if nav_href
@@ -1231,7 +1282,7 @@ def _epub_parse_nav(zf, nav_href):
     from bs4 import BeautifulSoup
     html = zf.read(nav_href).decode("utf-8", "ignore")
     soup = BeautifulSoup(html, "html.parser")
-    nav = soup.find("nav", attrs={"epub:type": "toc"}) or soup.find("nav")
+    nav = soup.find("nav", attrs={"epub:type": lambda x: x and "toc" in x.lower()}) or soup.find("nav")
     out = []
     if not nav:
         return out
@@ -1298,13 +1349,14 @@ def _epub_caption(img):
             if t and (_CAP_RE.match(t) or _CAP_LOOSE.search(t)):
                 return t[:220]
     # 兜底：<img alt> 或 <svg><title>/<desc> 无障碍文本作图注（公版 EPUB 常把说明写进
-    # alt 而非 <figcaption>）；仅当像图注才采用（降噪，避免装饰性 alt 进训练）。
+    # alt 而非 <figcaption>，如 Flatland 的 "A diagram of three triangles..."）。
+    # 采用条件：非装饰性 且 多词描述（挡掉 cover/logo/titlepage 等装饰词与单字标签）。
     if img.name == "img":
         alt = (img.get("alt") or "").strip()
     else:
         t = img.find("title") or img.find("desc")
         alt = (t.get_text(" ", strip=True) if t else "").strip()
-    if alt and (_CAP_RE.match(alt) or _CAP_LOOSE.search(alt)):
+    if alt and (" " in alt) and not _is_decorative_alt(alt):
         return alt[:220]
     return ""
 
@@ -1365,7 +1417,8 @@ def _epub_figures(path):
             top = [e for e in entries if e[0] <= 1]
             chapter = (top[-1][1] if top else entries[0][1])
             deepest = max(entries, key=lambda e: e[0])
-            section = deepest[1] if deepest[0] > 1 else None
+            # 章内无独立子节（或子节名与章名相同）→ section 置空，避免 章/节 目录名重复
+            section = deepest[1] if (deepest[0] > 1 and deepest[1] != chapter) else None
         else:
             chapter, section = None, None
         # 文档正文（context，前 4000 字）
@@ -1950,6 +2003,69 @@ def selftest():
         os.unlink(fepub)
     except ImportError:
         print("  (skipped EPUB 插图用例：pymupdf/bs4 缺失)")
+
+    # --- 用例11：SE 式 toc.xhtml（无 nav.xhtml）+ 描述性英文 alt 召回 ---
+    # 复现 Flatland 真书坑：Standard Ebooks 旧版用 epub/toc.xhtml 而非 nav.xhtml；
+    # 插图无 <figcaption>，说明写在 <img alt>（英文描述，无 图/Fig 正则命中）。
+    try:
+        import pymupdf as fitz
+        import zipfile as _zip
+        def _png(w, h):
+            px = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, w, h), False)
+            return px.tobytes("png")
+        container = ('<?xml version="1.0"?>\n'
+                     '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                     '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                     'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        # 注意：manifest 无 nav 项，TOC 在 toc.xhtml（SE 旧版风格）
+        opf = ('<?xml version="1.0"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+               '<manifest>'
+               '<item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+               '<item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>'
+               '<item id="toc" href="toc.xhtml" media-type="application/xhtml+xml"/>'
+               '<item id="f1" href="img/fig1.png" media-type="image/png"/>'
+               '<item id="logo" href="img/logo.png" media-type="image/png"/>'
+               '</manifest><spine><itemref idref="ch1"/><itemref idref="ch2"/></spine></package>')
+        toc = ('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml" '
+               'xmlns:epub="http://www.idpf.org/2007/ops"><body epub:type="frontmatter">'
+               '<nav epub:type="toc"><ol>'
+               '<li><a href="ch1.xhtml">I: Of the Nature of Flatland</a></li>'
+               '<li><a href="ch2.xhtml">II: Of the Climate and Houses</a></li>'
+               '</ol></nav></body></html>')
+        ch1 = ('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+               '<h1>I: Of the Nature of Flatland</h1>'
+               # 无 figcaption；说明写进 alt（英文描述，无 图/Fig 正则命中）→ 应被描述性 alt 兜底召回
+               '<img src="img/fig1.png" alt="A diagram of three triangles, points downwards."/>'
+               '</body></html>')
+        ch2 = ('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+               '<h1>II: Of the Climate and Houses</h1>'
+               # 装饰性 logo（alt 纯装饰词）→ 不应当图注进训练
+               '<img src="img/logo.png" alt="logo"/>'
+               '</body></html>')
+        fd, epub = tempfile.mkstemp(suffix=".epub")
+        os.close(fd)
+        with _zip.ZipFile(epub, "w") as z:
+            z.writestr("mimetype", "application/epub+zip", compress_type=_zip.ZIP_STORED)
+            z.writestr("META-INF/container.xml", container)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/toc.xhtml", toc)
+            z.writestr("OEBPS/ch1.xhtml", ch1)
+            z.writestr("OEBPS/ch2.xhtml", ch2)
+            z.writestr("OEBPS/img/fig1.png", _png(240, 240))
+            z.writestr("OEBPS/img/logo.png", _png(240, 240))
+        fr = extract_figures(epub)
+        # 章归属：靠 toc.xhtml 解析（非 nav.xhtml），不应是 全书/全文
+        chapters = {s["chapter"] for s in fr["sections"] if s["figures"]}
+        assert chapters == {"I: Of the Nature of Flatland"}, "toc.xhtml 章节归属失败：%s" % chapters
+        # 描述性英文 alt 被召回；装饰性 logo 的 alt 被拒（caption 空）
+        caps_by_ch = {s["chapter"]: [f["caption"] for f in s["figures"]] for s in fr["sections"] if s["figures"]}
+        diag_caps = caps_by_ch.get("I: Of the Nature of Flatland", [])
+        assert any("diagram of three triangles" in c for c in diag_caps), "描述性英文 alt 未召回：%s" % diag_caps
+        logo_caps = caps_by_ch.get("II: Of the Climate and Houses", [])
+        assert all(c == "" for c in logo_caps), "装饰性 alt 不应当图注：%s" % logo_caps
+        os.unlink(epub)
+    except ImportError:
+        print("  (skipped EPUB toc.xhtml 用例：pymupdf/bs4 缺失)")
 
     print("  selftest passed（大纲章含节 / 无大纲多章小说 / 扫描版标记 / DOCX / MOBI / "
           "FB2 / CBZ / PDF插图抽取 / EPUB插图抽取 / 防御 re-split）。")

@@ -387,12 +387,16 @@ def inline_figures(book_name):
 def _match_lessons(lessons, chapter, section):
     """返回匹配的课程 md 路径列表。章名命中；节名命中或章级(无节)→章首课。"""
     def norm(s):
-        return re.sub(r"[\s_]+", "", s or "")
+        # 去所有非字母数字（含空格/下划线/冒号/标点），保留中文，便于跨大小写/符号对齐
+        return re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "", s or "")
 
+    # 优先精确章名匹配，避免子串误绑（如 "Alice" 误中 "Alice in Wonderland"）
     ch_matched = [(cn, ln, p) for (cn, ln, p) in lessons
-                  if chapter and (norm(cn) == norm(chapter)
-                                  or norm(cn) in norm(chapter)
-                                  or norm(chapter) in norm(cn))]
+                  if chapter and norm(cn) == norm(chapter)]
+    if not ch_matched:
+        ch_matched = [(cn, ln, p) for (cn, ln, p) in lessons
+                      if chapter and (norm(cn) in norm(chapter)
+                                      or norm(chapter) in norm(cn))]
     if not ch_matched:
         return []
     if not section or section == "全文":
