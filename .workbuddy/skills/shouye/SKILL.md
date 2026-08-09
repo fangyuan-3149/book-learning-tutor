@@ -141,6 +141,5 @@ python tools/acquire/rule_trace.py ...            # 规则求值链路追踪
 ---
 
 ## 四、纪律
-- **版权**：仅开源 / CC / 公有领域 / 用户自有合法源。爬取限合法内容源。
 - **每步 改→测→git commit**。
 - 遇到源不可用，先看 `import_source.py` 给的归因再动手，别盲改规则。
