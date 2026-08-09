@@ -1049,11 +1049,12 @@ def _natkey_static(s):
 # ---------------------------------------------------------------------------
 # 插图抽取（PDF，pymupdf）—— 多模态训练单元：(图, 图注, 上下文)
 # ---------------------------------------------------------------------------
-# 严格（行首锚定）：图/表 + 可选标点 + 数字（"图1.1" / "Figure 2"）。
-# 注意：CJK 后接数字无单词边界，故不能用 \b（会漏掉"图1.1"）；要求数字可挡掉"图中/图里"等正文误绑。
-_CAP_RE = re.compile(r"^(图|表|照片|示意图|结构图|流程图|Fig\.?|Figure)\s*[.\-:：]?\s*\d", re.IGNORECASE)
-# 宽松（行内任意位置）：捕获"参见图1"/"图 3"等，作兜底。
-_CAP_LOOSE = re.compile(r"图\s*\d|表\s*\d|Figure\s*\d|Fig\.?\s*\d", re.IGNORECASE)
+# 严格（行首锚定）：图/表/插画 + 可选标点 + 编号（"图1.1" / "Figure 2" / "Plate XIII"）。
+# 注意：CJK 后接数字无单词边界，故不能用 \b（会漏掉"图1.1"）；要求编号可挡掉"图中/图里"等正文误绑。
+# 编号支持 阿拉伯数字 / 小写罗马(i,iv) / 大写罗马(I,V,X) —— 公版英文插图书常用 "Plate XIII" "Figure II"。
+_CAP_RE = re.compile(r"^(图|表|照片|插画|示意图|结构图|流程图|Plate|Illustration|Fig\.?|Figure)\s*[.\-:：]?\s*[\divxIVX]+", re.IGNORECASE)
+# 宽松（行内任意位置）：捕获"参见图1"/"图 3"/"Plate 4"等，作兜底。
+_CAP_LOOSE = re.compile(r"图\s*\d|表\s*\d|插画\s*\d|Figure\s*\d|Fig\.?\s*\d|Plate\s*\d|Illustration\s*\d", re.IGNORECASE)
 _MIN_FIG_PX = 200 * 200  # 小于此面积的图片视为装饰/图标，丢弃（降噪）
 
 
@@ -1304,41 +1305,55 @@ def _epub_figures(path):
         context = soup.get_text("\n")
         context = "\n".join(ln.strip() for ln in context.splitlines() if ln.strip())
         figs = []
-        for img in soup.find_all("img"):
-            src = img.get("src")
-            if not src or src.startswith("data:"):
-                continue
-            rel = posixpath.normpath(
-                posixpath.join(posixpath.dirname(doc_href), src.split("#")[0]))
-            item = manifest.get(rel)
-            mt = item[1] if item else ""
-            try:
-                data = zf.read(rel)
-            except KeyError:
+        for el in soup.find_all(["img", "svg"]):
+            if el.name == "svg":
+                # 内联 SVG 矢量图（技术/公版 EPUB 常见，如 Flatland / 数学书插图）。
+                # 无独立二进制，存其 outer XML；矢量不按像素尺寸过滤（有 w/h 属性才粗滤）。
+                data = str(el).encode("utf-8")
+                ext = "svg"
+                mt = ""
                 try:
-                    data = zf.read(src.split("#")[0])
-                except KeyError:
-                    continue
-            if not data:
-                continue
-            ext = src.split(".")[-1].split("?")[0].lower() if "." in src else ""
-            if not ext and mt:
-                ext = mt.split("/")[-1].lower()
-            is_raster = (mt.startswith("image/") and "svg" not in mt) or ext in ("png", "jpeg", "jpg", "gif", "webp")
-            w = h = 0
-            if is_raster:
-                try:
-                    pm = fitz.Pixmap(data)
-                    w, h = pm.width, pm.height
+                    w = int(re.sub(r"\D", "", str(el.get("width") or "")) or 0)
+                    h = int(re.sub(r"\D", "", str(el.get("height") or "")) or 0)
                 except Exception:
                     w = h = 0
-                if w * h < _MIN_FIG_PX:
+                if w and h and w * h < _MIN_FIG_PX:
                     continue
+            else:
+                src = el.get("src")
+                if not src or src.startswith("data:"):
+                    continue
+                rel = posixpath.normpath(
+                    posixpath.join(posixpath.dirname(doc_href), src.split("#")[0]))
+                item = manifest.get(rel)
+                mt = item[1] if item else ""
+                try:
+                    data = zf.read(rel)
+                except KeyError:
+                    try:
+                        data = zf.read(src.split("#")[0])
+                    except KeyError:
+                        continue
+                if not data:
+                    continue
+                ext = src.split(".")[-1].split("?")[0].lower() if "." in src else ""
+                if not ext and mt:
+                    ext = mt.split("/")[-1].lower()
+                is_raster = (mt.startswith("image/") and "svg" not in mt) or ext in ("png", "jpeg", "jpg", "gif", "webp")
+                w = h = 0
+                if is_raster:
+                    try:
+                        pm = fitz.Pixmap(data)
+                        w, h = pm.width, pm.height
+                    except Exception:
+                        w = h = 0
+                    if w * h < _MIN_FIG_PX:
+                        continue
             digest = hashlib.sha256(data).hexdigest()
             if digest in seen:
                 continue
             seen.add(digest)
-            caption = _epub_caption(img)
+            caption = _epub_caption(el)
             figs.append({"ext": ext, "width": w, "height": h,
                          "bytes": data, "caption": caption, "page": doc_href})
         if figs:
@@ -1766,6 +1781,7 @@ def selftest():
                '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
                '<item id="f1" href="img/fig1.png" media-type="image/png"/>'
                '<item id="f2" href="img/fig2.png" media-type="image/png"/>'
+               '<item id="f3" href="img/fig3.png" media-type="image/png"/>'
                '<item id="sm" href="img/small.png" media-type="image/png"/>'
                '</manifest><spine><itemref idref="ch1"/><itemref idref="ch2"/></spine></package>')
         nav = ('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml" '
@@ -1783,6 +1799,14 @@ def selftest():
                '<h1>第二章</h1>'
                '<figure><img src="img/fig2.png"/>'
                '<figcaption>图2.3 第二章的流程图。</figcaption></figure>'
+               '<p>一段普通正文，前后都不该被误绑为图注。</p>'
+               # 非 <figure> 包裹的栅格图 + 相邻 <p class="caption">（验证 _epub_caption 兄弟节点路径）
+               '<img src="img/fig3.png"/>'
+               '<p class="caption">图4 邻位图注。</p>'
+               # 内联 SVG 矢量图 + 相邻图注（验证 SVG 分支不被尺寸过滤、且能绑图注）
+               '<svg width="300" height="200" xmlns="http://www.w3.org/2000/svg">'
+               '<rect width="300" height="200" fill="#c33"/></svg>'
+               '<p class="caption">图3 矢量示意图。</p>'
                '</body></html>')
         fd, epub = tempfile.mkstemp(suffix=".epub")
         os.close(fd)
@@ -1795,19 +1819,30 @@ def selftest():
             z.writestr("OEBPS/ch2.xhtml", ch2)
             z.writestr("OEBPS/img/fig1.png", big1)
             z.writestr("OEBPS/img/fig2.png", big2)
+            z.writestr("OEBPS/img/fig3.png", _png(220, 260))
             z.writestr("OEBPS/img/small.png", small)
         fr = extract_figures(epub)
         assert fr["fmt"] == "epub", "EPUB 应识别为 epub，实际 %s" % fr["fmt"]
         all_figs = [fg for s in fr["sections"] for fg in s["figures"]]
-        # 大图 fig1 + fig2 抽中；装饰小图(small)被 min_px 过滤 → 共 2 张
-        assert len(all_figs) == 2, "应抽中 2 张大图（装饰小图被过滤），实际 %d" % len(all_figs)
+        # fig1+fig2（figcaption）、fig3（邻位图注）、svg（矢量+邻位图注）抽中；
+        # 装饰小图(small)被 min_px 过滤 → 共 4 张
+        assert len(all_figs) == 4, "应抽中 4 张（2 figcaption + 1 邻位栅格 + 1 内联SVG；装饰小图被过滤），实际 %d" % len(all_figs)
         caps = " ".join(f["caption"] for f in all_figs)
         assert "图1.1" in caps and "示意图" in caps, "图注1 未命中：%r" % caps
         assert "图2.3" in caps and "流程图" in caps, "图注2 未命中：%r" % caps
+        assert "图3" in caps and "矢量" in caps, "SVG 图注未命中：%r" % caps
+        assert "图4" in caps and "邻位" in caps, "邻位图注未命中：%r" % caps
         # 章归属：第一章 / 第二章
         chapters = {s["chapter"] for s in fr["sections"] if s["figures"]}
         assert chapters == {"第一章", "第二章"}, "章归属异常：%s" % chapters
+        # SVG 分支应被抽出且标记 ext=svg（验证不被尺寸过滤误杀）
+        svg_figs = [f for f in all_figs if f["ext"] == "svg"]
+        assert len(svg_figs) == 1, "内联 SVG 应抽中 1 张，实际 %d" % len(svg_figs)
+        for f in svg_figs:
+            assert f["width"] == 300 and f["height"] == 200, "SVG 尺寸未读：%s" % f
         for f in all_figs:
+            if f["ext"] == "svg":
+                continue
             assert f["width"] >= 200 and f["height"] >= 200, "大图尺寸异常：%s" % f
         os.unlink(epub)
     except ImportError:
