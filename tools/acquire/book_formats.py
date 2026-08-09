@@ -1261,7 +1261,32 @@ def _epub_caption(img):
             t = el.get_text(" ", strip=True)
             if t and (_CAP_RE.match(t) or _CAP_LOOSE.search(t)):
                 return t[:220]
+    # 兜底：<img alt> 或 <svg><title>/<desc> 无障碍文本作图注（公版 EPUB 常把说明写进
+    # alt 而非 <figcaption>）；仅当像图注才采用（降噪，避免装饰性 alt 进训练）。
+    if img.name == "img":
+        alt = (img.get("alt") or "").strip()
+    else:
+        t = img.find("title") or img.find("desc")
+        alt = (t.get_text(" ", strip=True) if t else "").strip()
+    if alt and (_CAP_RE.match(alt) or _CAP_LOOSE.search(alt)):
+        return alt[:220]
     return ""
+
+
+def _epub_has_content_drm(zf):
+    """META-INF/encryption.xml 里若任一 CipherReference 指向内容文档(xhtml/opf/ncx)，
+    即内容被加密（DRM，如 Adobe ADEPT），抽出来是乱码——法律/许可边界非技术题。
+    仅混淆字体(.otf/.ttf/.woff)不算内容加密，可正常抽。"""
+    import re as _re
+    try:
+        xml = zf.read("META-INF/encryption.xml").decode("utf-8", "ignore")
+    except Exception:
+        return False
+    for m in _re.finditer(r'<CipherReference[^>]*URI="([^"]+)"', xml, _re.IGNORECASE):
+        uri = m.group(1).lower()
+        if uri.endswith((".xhtml", ".html", ".htm", ".opf", ".ncx")):
+            return True
+    return False
 
 
 def _epub_figures(path):
@@ -1270,7 +1295,8 @@ def _epub_figures(path):
     返回同 extract_figures：{fmt,page_count,sections:[{chapter,section,title,level,
     figures,context}]}。figures 每项 {ext,width,height,bytes,caption,page(=doc路径)}。
     降噪：① 装饰/图标小图（面积<_MIN_FIG_PX 的栅格图）丢弃；② sha256 去重；
-    ③ 图注走 <figcaption> 或相邻图注文本。SVG 无法按尺寸过滤，原样保留。
+    ③ 图注走 <figcaption> / 相邻图注文本 / alt 无障碍文本。SVG 无法按尺寸过滤，原样保留。
+    DRM 加密 EPUB 直接抛清晰异常（内容文档加密，抽出来是乱码，不产出垃圾）。
     """
     import zipfile
     import posixpath
@@ -1279,6 +1305,11 @@ def _epub_figures(path):
     from bs4 import BeautifulSoup
 
     zf = zipfile.ZipFile(path)
+    if "META-INF/encryption.xml" in zf.namelist() and _epub_has_content_drm(zf):
+        zf.close()
+        raise RuntimeError(
+            "检测到 DRM 加密 EPUB（内容文档已加密），无法抽取图文；"
+            "请改用无 DRM 的合法副本（如 Standard Ebooks / Gutenberg 公版）。")
     manifest, spine, toc_entries = _epub_open(zf)
     toc_by_doc = {}
     for (title, base, frag, level) in toc_entries:
@@ -1782,6 +1813,7 @@ def selftest():
                '<item id="f1" href="img/fig1.png" media-type="image/png"/>'
                '<item id="f2" href="img/fig2.png" media-type="image/png"/>'
                '<item id="f3" href="img/fig3.png" media-type="image/png"/>'
+               '<item id="f5" href="img/fig5.png" media-type="image/png"/>'
                '<item id="sm" href="img/small.png" media-type="image/png"/>'
                '</manifest><spine><itemref idref="ch1"/><itemref idref="ch2"/></spine></package>')
         nav = ('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml" '
@@ -1807,6 +1839,7 @@ def selftest():
                '<svg width="300" height="200" xmlns="http://www.w3.org/2000/svg">'
                '<rect width="300" height="200" fill="#c33"/></svg>'
                '<p class="caption">图3 矢量示意图。</p>'
+               '<img src="img/fig5.png" alt="图5 靠alt文本"/>'  # 仅 alt 无障碍文本作图注（无 figcaption/邻位）
                '</body></html>')
         fd, epub = tempfile.mkstemp(suffix=".epub")
         os.close(fd)
@@ -1820,18 +1853,20 @@ def selftest():
             z.writestr("OEBPS/img/fig1.png", big1)
             z.writestr("OEBPS/img/fig2.png", big2)
             z.writestr("OEBPS/img/fig3.png", _png(220, 260))
+            z.writestr("OEBPS/img/fig5.png", _png(250, 250))
             z.writestr("OEBPS/img/small.png", small)
         fr = extract_figures(epub)
         assert fr["fmt"] == "epub", "EPUB 应识别为 epub，实际 %s" % fr["fmt"]
         all_figs = [fg for s in fr["sections"] for fg in s["figures"]]
         # fig1+fig2（figcaption）、fig3（邻位图注）、svg（矢量+邻位图注）抽中；
         # 装饰小图(small)被 min_px 过滤 → 共 4 张
-        assert len(all_figs) == 4, "应抽中 4 张（2 figcaption + 1 邻位栅格 + 1 内联SVG；装饰小图被过滤），实际 %d" % len(all_figs)
+        assert len(all_figs) == 5, "应抽中 5 张（2 figcaption + 1 邻位栅格 + 1 内联SVG + 1 alt兜底；装饰小图被过滤），实际 %d" % len(all_figs)
         caps = " ".join(f["caption"] for f in all_figs)
         assert "图1.1" in caps and "示意图" in caps, "图注1 未命中：%r" % caps
         assert "图2.3" in caps and "流程图" in caps, "图注2 未命中：%r" % caps
         assert "图3" in caps and "矢量" in caps, "SVG 图注未命中：%r" % caps
         assert "图4" in caps and "邻位" in caps, "邻位图注未命中：%r" % caps
+        assert "图5" in caps and "alt" in caps, "alt 兜底图注未命中：%r" % caps
         # 章归属：第一章 / 第二章
         chapters = {s["chapter"] for s in fr["sections"] if s["figures"]}
         assert chapters == {"第一章", "第二章"}, "章归属异常：%s" % chapters
@@ -1845,6 +1880,38 @@ def selftest():
                 continue
             assert f["width"] >= 200 and f["height"] >= 200, "大图尺寸异常：%s" % f
         os.unlink(epub)
+        # DRM 加密 EPUB：内容文档被加密 → 应抛清晰异常而非产出乱码
+        enc = ('<?xml version="1.0"?>\n<encryption xmlns="http://www.w3.org/2001/04/xmlenc#">'
+               '<EncryptedData><CipherReference URI="OEBPS/ch1.xhtml"/></EncryptedData></encryption>')
+        fd, depub = tempfile.mkstemp(suffix=".epub")
+        os.close(fd)
+        with _zip.ZipFile(depub, "w") as z:
+            z.writestr("mimetype", "application/epub+zip", compress_type=_zip.ZIP_STORED)
+            z.writestr("META-INF/container.xml", container)
+            z.writestr("META-INF/encryption.xml", enc)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/ch1.xhtml", ch1)
+        try:
+            extract_figures(depub)
+            assert False, "DRM EPUB 应抛异常"
+        except RuntimeError as e:
+            assert "DRM" in str(e), "DRM 异常信息应含 DRM：%r" % e
+        os.unlink(depub)
+        # 仅混淆字体（非内容加密）→ 不应抛 DRM 异常，可正常抽
+        enc_font = ('<?xml version="1.0"?>\n<encryption xmlns="http://www.w3.org/2001/04/xmlenc#">'
+                    '<EncryptedData><CipherReference URI="OEBPS/fonts/body.otf"/></EncryptedData></encryption>')
+        fd, fepub = tempfile.mkstemp(suffix=".epub")
+        os.close(fd)
+        with _zip.ZipFile(fepub, "w") as z:
+            z.writestr("mimetype", "application/epub+zip", compress_type=_zip.ZIP_STORED)
+            z.writestr("META-INF/container.xml", container)
+            z.writestr("META-INF/encryption.xml", enc_font)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/nav.xhtml", nav)
+            z.writestr("OEBPS/ch1.xhtml", ch1)
+        fr2 = extract_figures(fepub)
+        assert fr2["fmt"] == "epub", "仅混淆字体的 EPUB 不应被判 DRM"
+        os.unlink(fepub)
     except ImportError:
         print("  (skipped EPUB 插图用例：pymupdf/bs4 缺失)")
 
