@@ -268,11 +268,15 @@ def figures_to_book(path, book_name=None):
     book_dir = ROOT / "书库" / _safe(name)
     if not book_dir.exists():
         raise SystemExit(f"未找到 书库/{_safe(name)}/，请先跑完 ingest→convert→course_gen")
-    # 取章节正文（用于 context 摘要）
-    r = extract_book(str(p))
-    text_map = {}
-    for s in r["sections"]:
-        text_map.setdefault((s["chapter"], s["section"]), []).append(s["text"])
+    # 取章节正文（text_map 仅作 context 兜底；EPUB 自带的 context 优先）。
+    # extract_book 失败（如 EPUB 解析后端缺失）不应阻断——extract_figures 已自带 context。
+    try:
+        r = extract_book(str(p))
+        text_map = {}
+        for s in r["sections"]:
+            text_map.setdefault((s["chapter"], s["section"]), []).append(s["text"])
+    except Exception:
+        text_map = {}
     f = extract_figures(str(p))
     fig_root = book_dir / "_figures"
     fig_root.mkdir(parents=True, exist_ok=True)
@@ -287,7 +291,10 @@ def figures_to_book(path, book_name=None):
         sec_san = _fig_dirname(secname or "全文")
         d = fig_root / ch_san / sec_san
         d.mkdir(parents=True, exist_ok=True)
-        context = "\n".join(text_map.get((ch, secname), []))[:800]
+        # 优先用 extract_figures 已抽取的 context（EPUB 的 section 标签与 extract_book
+        # 的 (章,节) 键不一致，text_map 查不到；PDF 也自带，更准）；缺则退回 text_map。
+        context = sec.get("context") or "\n".join(text_map.get((ch, secname), [])) or ""
+        context = context[:800]
         captions = []
         for j, fg in enumerate(figs, 1):
             fn = d / ("fig_%03d.%s" % (j, fg["ext"]))
@@ -310,6 +317,103 @@ def figures_to_book(path, book_name=None):
     print(f"[figures] {p.name} → 书库/{_safe(name)}/_figures/ （{total} 张图，"
           f"{len(index)} 个对齐单元，{f['page_count']} 页）")
     return str(fig_root), total
+
+
+def inline_figures(book_name):
+    """把 书库/<书名>/_figures/ 的插图按 (章,节) 内联进对应课程 .md。
+
+    每个有图的 (章,节) 目录含 meta.json（chapter/section/captions/context）+ fig_NNN.ext；
+    匹配 书库/<书名>/第NN章_章名/第NN课_课名.md：章名命中 + 节名命中（或无节→章首课）。
+    在课程 md 末尾追加「## 配图（多模态训练单元）」块：![图](相对路径) + 图注 + 上下文。
+    幂等：md 已含该图相对路径则跳过。
+    """
+    from pathlib import Path as _P
+    book_dir = ROOT / "书库" / _safe(book_name)
+    fig_root = book_dir / "_figures"
+    if not fig_root.exists():
+        raise SystemExit(
+            f"未找到 书库/{_safe(book_name)}/_figures/，请先跑 `python pipeline.py figures <原书> --name {book_name}`")
+    # 收集 figure 单元
+    fig_units = []
+    for dp, _, fs in os.walk(fig_root):
+        if "meta.json" not in fs:
+            continue
+        meta = json.loads((_P(dp) / "meta.json").read_text(encoding="utf-8"))
+        caps = meta.get("captions") or []
+        for fn in sorted(f for f in fs if f.startswith("fig_")):
+            figfile = _P(dp) / fn
+            idx = int(re.sub(r"\D", "", fn[4:7] or "1")) - 1
+            cap = caps[idx] if 0 <= idx < len(caps) else None
+            fig_units.append((meta.get("chapter"), meta.get("section"),
+                              cap, meta.get("context", ""), figfile))
+    # 收集 lessons
+    lessons = []
+    for ch_dir in book_dir.iterdir():
+        if not ch_dir.is_dir():
+            continue
+        m = re.match(r"第\d+章_(.+)", ch_dir.name)
+        if not m:
+            continue
+        cn = m.group(1)
+        for f in ch_dir.iterdir():
+            if f.is_file() and f.name.endswith(".md"):
+                lm = re.match(r"第\d+课_(.+)\.md", f.name)
+                ln = lm.group(1) if lm else f.name[:-3]
+                lessons.append((cn, ln, f))
+    if not lessons:
+        raise SystemExit(f"书库/{_safe(book_name)}/ 下未找到课程 .md（请先 course_gen）")
+    # 匹配 + 插入
+    inserted = 0
+    skipped = 0
+    for (chapter, section, cap, context, figfile) in fig_units:
+        targets = _match_lessons(lessons, chapter, section)
+        if not targets:
+            skipped += 1
+            continue
+        for lp in targets:
+            if _insert_fig_into_lesson(lp, figfile, cap, context):
+                inserted += 1
+            else:
+                skipped += 1
+    print(f"[inline] 为 书库/{_safe(book_name)}/ 插入 {inserted} 处配图"
+          f"（共 {len(fig_units)} 张图，{skipped} 处跳过/已存在）")
+    return inserted
+
+
+def _match_lessons(lessons, chapter, section):
+    """返回匹配的课程 md 路径列表。章名命中；节名命中或章级(无节)→章首课。"""
+    def norm(s):
+        return re.sub(r"[\s_]+", "", s or "")
+
+    ch_matched = [(cn, ln, p) for (cn, ln, p) in lessons
+                  if chapter and (norm(cn) == norm(chapter)
+                                  or norm(cn) in norm(chapter)
+                                  or norm(chapter) in norm(cn))]
+    if not ch_matched:
+        return []
+    if not section or section == "全文":
+        return [ch_matched[0][2]]  # 章级图 → 该章第一个 lesson
+    secn = norm(section)
+    out = [p for (cn, ln, p) in ch_matched
+           if secn == norm(ln) or secn in norm(ln) or norm(ln) in secn]
+    return out or [ch_matched[0][2]]  # 匹配不到具体课 → 章首课
+
+
+def _insert_fig_into_lesson(md_path, figfile, cap, context):
+    """在课程 md 末尾追加配图块；已含该图相对路径则跳过（幂等）。返回是否新插入。"""
+    rp = os.path.relpath(figfile, md_path.parent).replace("\\", "/")
+    text = md_path.read_text(encoding="utf-8")
+    if rp in text:
+        return False
+    block = "\n\n---\n\n## 配图（多模态训练单元）\n\n"
+    block += f"![{cap or '图'}]({rp})\n\n"
+    if cap:
+        block += f"> 图注：{cap}\n\n"
+    if context:
+        block += (f"<details><summary>上下文</summary>\n\n"
+                  f"{context[:600]}\n\n</details>\n")
+    md_path.write_text(text.rstrip() + block, encoding="utf-8")
+    return True
 
 
 
@@ -340,6 +444,7 @@ def main():
     pi = sub.add_parser("ingest"); pi.add_argument("path"); pi.add_argument("--name", default=None)
     pi.add_argument("--chunks", type=int, default=None, help="扁平整包 CBZ 按图片序切成 N 话（仅漫画、且整包无分目录时生效）")
     pf = sub.add_parser("figures"); pf.add_argument("path"); pf.add_argument("--name", default=None)
+    pg = sub.add_parser("inline"); pg.add_argument("name", help="书名（书库/<书名>/ 下的目录名）")
     pa = sub.add_parser("all"); pa.add_argument("kw"); pa.add_argument("--idx", type=int, nargs="*"); pa.add_argument("--max", type=int, default=None)
     args = ap.parse_args()
 
@@ -357,6 +462,8 @@ def main():
         ingest(args.path, args.name, cbz_chunks=args.chunks)
     elif args.cmd == "figures":
         figures_to_book(args.path, args.name)
+    elif args.cmd == "inline":
+        inline_figures(args.name)
     elif args.cmd == "all":
         res, cache = search_all(args.kw, args.idx)
         ok = [r for r in res if r.get("bookUrl") and not r.get("_error")]

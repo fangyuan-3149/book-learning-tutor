@@ -1131,43 +1131,269 @@ def _pdf_figures(doc, p0, p1, min_px=_MIN_FIG_PX):
     return out
 
 
-def extract_figures(path, fmt=None):
-    """PDF 插图抽取入口：按 TOC 章/节归属插图，返回每节的图列表。
+def _epub_open(zf):
+    """从 EPUB zip 解析 OPF 路径、manifest、spine、TOC 条目。
 
-    返回 {'fmt','page_count','sections':[{chapter,section,title,level,figures}]}。
-    v1 仅 PDF（教材主力格式）；EPUB 插图归属（XHTML <img>/<figcaption> 映射）待做。
-    figures 为空列表的节也会被返回（便于上层按 (章,节) 对齐），但流水线只落地有图的节。
+    返回 (manifest, spine, toc_entries)
+      manifest:    {href(相对 zip 根, 已归一化): (id, media_type)}
+      spine:       [doc_href, ...] 阅读顺序
+      toc_entries: [(title, doc_href, fragment, level), ...] 顺序
+    EPUB 是 XHTML 包，PyMuPDF 会栅格化页面（get_images 拿不到原始 <img> 二进制 /
+    图注结构），故这里直接解 zip 解析 manifest/spine/TOC 定位 <img> 原始字节。
+    """
+    import posixpath
+    try:
+        container = zf.read("META-INF/container.xml").decode("utf-8", "ignore")
+    except KeyError:
+        container = ""
+    opf_path = None
+    if container:
+        m = re.search(r'full-path="([^"]+)"', container)
+        if m:
+            opf_path = m.group(1)
+    if not opf_path:  # 退化：找第一个 .opf
+        opf_path = next((n for n in zf.namelist() if n.lower().endswith(".opf")), None)
+    if not opf_path:
+        raise RuntimeError("EPUB 缺少 OPF（container.xml 也无 .opf）")
+    opf_dir = posixpath.dirname(opf_path)
+    opf_xml = zf.read(opf_path).decode("utf-8", "ignore")
+    # manifest（逐 <item> 解析属性，顺序无关）
+    manifest = {}
+    for m in re.finditer(r"<item\b([^>]*)>", opf_xml, re.IGNORECASE):
+        attrs = m.group(1)
+        iid = re.search(r'\bid="([^"]+)"', attrs, re.IGNORECASE)
+        href = re.search(r'\bhref="([^"]+)"', attrs, re.IGNORECASE)
+        mt = re.search(r'\bmedia-type="([^"]+)"', attrs, re.IGNORECASE)
+        if iid and href:
+            h = posixpath.normpath(posixpath.join(opf_dir, href.group(1)))
+            manifest[h] = (iid.group(1), mt.group(1) if mt else "")
+    # spine（有序 doc idref → href）
+    spine_ids = re.findall(r'<itemref\b[^>]*?\bidref="([^"]+)"', opf_xml, re.IGNORECASE)
+    id_to_href = {v[0]: k for k, v in manifest.items()}
+    spine = [id_to_href[i] for i in spine_ids if i in id_to_href]
+    if not spine:  # 兜底：所有 xhtml 文档按名排序
+        spine = sorted(h for h, v in manifest.items()
+                       if (v[1].endswith("xhtml") or v[1].endswith("html")))
+    # TOC：EPUB3 nav.xhtml 或 EPUB2 toc.ncx
+    nav_href = next((h for h, v in manifest.items()
+                     if "nav" in (v[1] or "") or h.lower().endswith("nav.xhtml")), None)
+    ncx_href = next((h for h, v in manifest.items()
+                     if v[1] == "application/x-dtbncx+xml" or h.lower().endswith(".ncx")), None)
+    toc_entries = (_epub_parse_nav(zf, nav_href) if nav_href
+                   else _epub_parse_ncx(zf, ncx_href) if ncx_href else [])
+    # 归一化 TOC 的 doc href：相对 TOC 文档目录 → 与 manifest/spine 同基准
+    toc_dir = posixpath.dirname(nav_href or ncx_href or opf_dir)
+    norm_entries = []
+    for (title, base, frag, level) in toc_entries:
+        nb = posixpath.normpath(posixpath.join(toc_dir, base)) if base else base
+        norm_entries.append((title, nb, frag, level))
+    return manifest, spine, norm_entries
+
+
+def _epub_parse_nav(zf, nav_href):
+    from bs4 import BeautifulSoup
+    html = zf.read(nav_href).decode("utf-8", "ignore")
+    soup = BeautifulSoup(html, "html.parser")
+    nav = soup.find("nav", attrs={"epub:type": "toc"}) or soup.find("nav")
+    out = []
+    if not nav:
+        return out
+
+    def walk(ol, level):
+        for li in ol.find_all("li", recursive=False):
+            a = li.find("a")
+            if a:
+                href = a.get("href", "")
+                title = a.get_text(" ", strip=True)
+                base, _, frag = href.partition("#")
+                out.append((title, base, frag, level))
+            sub = li.find("ol")
+            if sub:
+                walk(sub, level + 1)
+    ol = nav.find("ol")
+    if ol:
+        walk(ol, 1)
+    return out
+
+
+def _epub_parse_ncx(zf, ncx_href):
+    from bs4 import BeautifulSoup
+    xml = zf.read(ncx_href).decode("utf-8", "ignore")
+    soup = BeautifulSoup(xml, "html.parser")
+    out = []
+    for np in soup.find_all("navpoint"):
+        txt = np.find("text")
+        content = np.find("content")
+        title = txt.get_text(" ", strip=True) if txt else ""
+        src = content.get("src", "") if content else ""
+        base, _, frag = src.partition("#")
+        lvl = len(np.find_parents("navpoint")) + 1
+        out.append((title, base, frag, lvl))
+    return out
+
+
+def _epub_caption(img):
+    """EPUB 图注：优先 <figure><figcaption>；否则相邻图注元素（<p class=caption> 等）。"""
+    fig = img.find_parent("figure")
+    if fig is not None:
+        fc = fig.find("figcaption")
+        if fc:
+            t = fc.get_text(" ", strip=True)
+            if t:
+                return t[:220]
+    cand_tags = []
+    sib = img.find_next_sibling()
+    while sib is not None and len(cand_tags) < 3:
+        cand_tags.append(sib)
+        sib = sib.find_next_sibling()
+    if img.parent:
+        ps = img.parent.find_next_sibling()
+        while ps is not None and len(cand_tags) < 3:
+            cand_tags.append(ps)
+            ps = ps.find_next_sibling()
+    for tag in cand_tags:
+        if tag.name in ("p", "div", "span", "i", "caption", "dd", "figcaption"):
+            t = tag.get_text(" ", strip=True)
+            if t and (_CAP_RE.match(t) or _CAP_LOOSE.search(t)):
+                return t[:220]
+        for el in tag.find_all(["p", "div", "span", "i", "caption", "dd", "figcaption"]):
+            t = el.get_text(" ", strip=True)
+            if t and (_CAP_RE.match(t) or _CAP_LOOSE.search(t)):
+                return t[:220]
+    return ""
+
+
+def _epub_figures(path):
+    """EPUB 插图抽取：解 zip → 定位各 XHTML 的 <img> 原始字节 + 图注，按 TOC 章/节归属。
+
+    返回同 extract_figures：{fmt,page_count,sections:[{chapter,section,title,level,
+    figures,context}]}。figures 每项 {ext,width,height,bytes,caption,page(=doc路径)}。
+    降噪：① 装饰/图标小图（面积<_MIN_FIG_PX 的栅格图）丢弃；② sha256 去重；
+    ③ 图注走 <figcaption> 或相邻图注文本。SVG 无法按尺寸过滤，原样保留。
+    """
+    import zipfile
+    import posixpath
+    import hashlib
+    import pymupdf as fitz
+    from bs4 import BeautifulSoup
+
+    zf = zipfile.ZipFile(path)
+    manifest, spine, toc_entries = _epub_open(zf)
+    toc_by_doc = {}
+    for (title, base, frag, level) in toc_entries:
+        toc_by_doc.setdefault(base, []).append((level, title))
+    seen = set()
+    sections = []
+    for doc_href in spine:
+        try:
+            html = zf.read(doc_href).decode("utf-8", "ignore")
+        except KeyError:
+            continue
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        entries = toc_by_doc.get(doc_href, [])
+        if entries:
+            top = [e for e in entries if e[0] <= 1]
+            chapter = (top[-1][1] if top else entries[0][1])
+            deepest = max(entries, key=lambda e: e[0])
+            section = deepest[1] if deepest[0] > 1 else None
+        else:
+            chapter, section = None, None
+        # 文档正文（context，前 4000 字）
+        context = soup.get_text("\n")
+        context = "\n".join(ln.strip() for ln in context.splitlines() if ln.strip())
+        figs = []
+        for img in soup.find_all("img"):
+            src = img.get("src")
+            if not src or src.startswith("data:"):
+                continue
+            rel = posixpath.normpath(
+                posixpath.join(posixpath.dirname(doc_href), src.split("#")[0]))
+            item = manifest.get(rel)
+            mt = item[1] if item else ""
+            try:
+                data = zf.read(rel)
+            except KeyError:
+                try:
+                    data = zf.read(src.split("#")[0])
+                except KeyError:
+                    continue
+            if not data:
+                continue
+            ext = src.split(".")[-1].split("?")[0].lower() if "." in src else ""
+            if not ext and mt:
+                ext = mt.split("/")[-1].lower()
+            is_raster = (mt.startswith("image/") and "svg" not in mt) or ext in ("png", "jpeg", "jpg", "gif", "webp")
+            w = h = 0
+            if is_raster:
+                try:
+                    pm = fitz.Pixmap(data)
+                    w, h = pm.width, pm.height
+                except Exception:
+                    w = h = 0
+                if w * h < _MIN_FIG_PX:
+                    continue
+            digest = hashlib.sha256(data).hexdigest()
+            if digest in seen:
+                continue
+            seen.add(digest)
+            caption = _epub_caption(img)
+            figs.append({"ext": ext, "width": w, "height": h,
+                         "bytes": data, "caption": caption, "page": doc_href})
+        if figs:
+            sections.append({"chapter": chapter, "section": section,
+                             "title": chapter or section or doc_href,
+                             "level": 1 if section is None else 2,
+                             "figures": figs, "context": context[:4000]})
+    zf.close()
+    return {"fmt": "epub", "page_count": len(spine), "sections": sections}
+
+
+def extract_figures(path, fmt=None):
+    """PDF / EPUB 插图抽取入口：按 TOC 章/节归属插图，返回每节的图列表。
+
+    返回 {'fmt','page_count','sections':[{chapter,section,title,level,figures,context}]}。
+    figures 每项 {ext,width,height,bytes,caption,page}；context 为该 (章,节) 正文前若干字
+    （训练侧图文对齐用）。无图的节不返回；流水线 figures_to_book 只落地有图的 (章,节)。
     """
     path = str(path)
     if not os.path.exists(path):
         raise RuntimeError(f"文件不存在：{path}")
     fmt = fmt or detect_format(path)
-    if fmt != "pdf":
-        raise RuntimeError(
-            f"v1 仅支持 PDF 插图抽取（EPUB 待做）；当前格式 {fmt}。")
-    import pymupdf as fitz
-    doc = fitz.open(path)
-    n = doc.page_count
-    toc = doc.get_toc()
-    sections = []
-    if toc:
-        cur_ch = None
-        for i, (lvl, title, page) in enumerate(toc):
-            t = _collapse_cjk_spacing((title or "").strip())
-            if lvl <= 1:
-                cur_ch = t
-            start = max(0, page - 1)
-            end = (toc[i + 1][2] - 1) if i + 1 < len(toc) else n - 1
-            end = max(end, start)
-            figs = _pdf_figures(doc, start, end)
-            sections.append({"chapter": cur_ch, "section": (t if lvl > 1 else None),
-                             "title": t, "level": lvl, "figures": figs})
+    if fmt == "pdf":
+        import pymupdf as fitz
+        doc = fitz.open(path)
+        n = doc.page_count
+        toc = doc.get_toc()
+        sections = []
+        if toc:
+            cur_ch = None
+            for i, (lvl, title, page) in enumerate(toc):
+                t = _collapse_cjk_spacing((title or "").strip())
+                if lvl <= 1:
+                    cur_ch = t
+                start = max(0, page - 1)
+                end = (toc[i + 1][2] - 1) if i + 1 < len(toc) else n - 1
+                end = max(end, start)
+                figs = _pdf_figures(doc, start, end)
+                ctx = "".join(doc[p].get_text("text") for p in range(start, end + 1))
+                sections.append({"chapter": cur_ch,
+                                 "section": (t if lvl > 1 else None),
+                                 "title": t, "level": lvl,
+                                 "figures": figs, "context": ctx[:4000]})
+        else:
+            figs = _pdf_figures(doc, 0, n - 1)
+            ctx = "".join(doc[p].get_text("text") for p in range(n))
+            sections.append({"chapter": None, "section": None, "title": "全文",
+                             "level": 0, "figures": figs, "context": ctx[:4000]})
+        doc.close()
+        return {"fmt": fmt, "page_count": n, "sections": sections}
+    elif fmt == "epub":
+        return _epub_figures(path)
     else:
-        figs = _pdf_figures(doc, 0, n - 1)
-        sections.append({"chapter": None, "section": None, "title": "全文",
-                         "level": 0, "figures": figs})
-    doc.close()
-    return {"fmt": fmt, "page_count": n, "sections": sections}
+        raise RuntimeError(
+            f"插图抽取暂仅支持 PDF / EPUB；当前格式 {fmt}。")
 
 
 # ---------------------------------------------------------------------------
@@ -1521,8 +1747,74 @@ def selftest():
     except ImportError:
         print("  (skipped 插图用例：pymupdf 缺失)")
 
+    # --- 用例10：EPUB 插图抽取（造含 <figure><img><figcaption> 的 EPUB，验证抽中+图注+过滤装饰图）---
+    try:
+        import pymupdf as fitz
+        import zipfile as _zip
+        def _png(w, h):
+            px = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, w, h), False)
+            return px.tobytes("png")
+        big1, big2, small = _png(240, 240), _png(300, 200), _png(80, 80)
+        container = ('<?xml version="1.0"?>\n'
+                     '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                     '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                     'media-type="application/oebps-package+xml"/></rootfiles></container>')
+        opf = ('<?xml version="1.0"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+               '<manifest>'
+               '<item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+               '<item id="ch2" href="ch2.xhtml" media-type="application/xhtml+xml"/>'
+               '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+               '<item id="f1" href="img/fig1.png" media-type="image/png"/>'
+               '<item id="f2" href="img/fig2.png" media-type="image/png"/>'
+               '<item id="sm" href="img/small.png" media-type="image/png"/>'
+               '</manifest><spine><itemref idref="ch1"/><itemref idref="ch2"/></spine></package>')
+        nav = ('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml" '
+               'xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol>'
+               '<li><a href="ch1.xhtml">第一章</a></li>'
+               '<li><a href="ch2.xhtml">第二章</a></li>'
+               '</ol></nav></body></html>')
+        ch1 = ('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+               '<h1>第一章</h1>'
+               '<figure><img src="img/fig1.png"/>'
+               '<figcaption>图1.1 第一章的示意图。</figcaption></figure>'
+               '<img src="img/small.png"/>'  # 无图注的装饰小图 → 应被尺寸过滤
+               '</body></html>')
+        ch2 = ('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+               '<h1>第二章</h1>'
+               '<figure><img src="img/fig2.png"/>'
+               '<figcaption>图2.3 第二章的流程图。</figcaption></figure>'
+               '</body></html>')
+        fd, epub = tempfile.mkstemp(suffix=".epub")
+        os.close(fd)
+        with _zip.ZipFile(epub, "w") as z:
+            z.writestr("mimetype", "application/epub+zip", compress_type=_zip.ZIP_STORED)
+            z.writestr("META-INF/container.xml", container)
+            z.writestr("OEBPS/content.opf", opf)
+            z.writestr("OEBPS/nav.xhtml", nav)
+            z.writestr("OEBPS/ch1.xhtml", ch1)
+            z.writestr("OEBPS/ch2.xhtml", ch2)
+            z.writestr("OEBPS/img/fig1.png", big1)
+            z.writestr("OEBPS/img/fig2.png", big2)
+            z.writestr("OEBPS/img/small.png", small)
+        fr = extract_figures(epub)
+        assert fr["fmt"] == "epub", "EPUB 应识别为 epub，实际 %s" % fr["fmt"]
+        all_figs = [fg for s in fr["sections"] for fg in s["figures"]]
+        # 大图 fig1 + fig2 抽中；装饰小图(small)被 min_px 过滤 → 共 2 张
+        assert len(all_figs) == 2, "应抽中 2 张大图（装饰小图被过滤），实际 %d" % len(all_figs)
+        caps = " ".join(f["caption"] for f in all_figs)
+        assert "图1.1" in caps and "示意图" in caps, "图注1 未命中：%r" % caps
+        assert "图2.3" in caps and "流程图" in caps, "图注2 未命中：%r" % caps
+        # 章归属：第一章 / 第二章
+        chapters = {s["chapter"] for s in fr["sections"] if s["figures"]}
+        assert chapters == {"第一章", "第二章"}, "章归属异常：%s" % chapters
+        for f in all_figs:
+            assert f["width"] >= 200 and f["height"] >= 200, "大图尺寸异常：%s" % f
+        os.unlink(epub)
+    except ImportError:
+        print("  (skipped EPUB 插图用例：pymupdf/bs4 缺失)")
+
     print("  selftest passed（大纲章含节 / 无大纲多章小说 / 扫描版标记 / DOCX / MOBI / "
-          "FB2 / CBZ / PDF插图抽取 / 防御 re-split）。")
+          "FB2 / CBZ / PDF插图抽取 / EPUB插图抽取 / 防御 re-split）。")
 
 
 if __name__ == "__main__":
