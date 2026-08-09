@@ -675,6 +675,40 @@ def html_to_text(html):
     return re.sub(r"\n{3,}", "\n\n", text)
 
 
+def all_local(path, book_name=None):
+    """本地书一键课程化：ingest → convert → course_gen（不联网、不爬取）。
+
+    仅接受单个书文件；目录请直接用 ingest 后逐本 convert。
+    path：本地书文件路径（pdf/epub/djvu/mobi/azw/azw3/docx/fb2/cbz/txt/md）。
+    book_name：可选显式书名；缺省用文件名 stem。
+    产物：书库/<书名>/ 课程（含 progress.json）。
+    """
+    import subprocess
+    p = Path(path)
+    if not p.exists():
+        raise SystemExit(f"路径不存在：{path}")
+    if p.is_dir():
+        raise SystemExit("[all-local] 仅支持单个书文件；目录请用 ingest 后逐本 convert。")
+    name = book_name or p.stem
+    fmt = detect_format_local(p)
+    if fmt == "cbz":  # 漫画：解包后直接进入漫画课程化
+        ingest(str(p), name)
+        ref_dir = REF_DIR / _safe(name)
+        cg = Path(__file__).resolve().parent.parent / "structure" / "course_gen.py"
+        r = subprocess.run([sys.executable, str(cg), str(ref_dir), "--book", name], cwd=str(ROOT))
+        if r.returncode != 0:
+            raise SystemExit(f"[all-local] 漫画课程生成失败（exit={r.returncode}）")
+        print(f"[all-local] 完成（漫画）→ 书库/{_safe(name)}/")
+        return
+    ingest(str(p), name)                       # → 参考/<书名>/
+    out_md, _ = convert(name)                  # → 预处理/<书名>.md
+    cg = Path(__file__).resolve().parent.parent / "structure" / "course_gen.py"
+    r = subprocess.run([sys.executable, str(cg), out_md, "--book", name], cwd=str(ROOT))
+    if r.returncode != 0:
+        raise SystemExit(f"[all-local] 课程生成失败（exit={r.returncode}）")
+    print(f"[all-local] 完成 → 书库/{_safe(name)}/（可开始逐课教学）")
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd")
@@ -687,6 +721,7 @@ def main():
     pg = sub.add_parser("inline"); pg.add_argument("name", help="书名（书库/<书名>/ 下的目录名）")
     pst = sub.add_parser("selftest")
     pa = sub.add_parser("all"); pa.add_argument("kw"); pa.add_argument("--idx", type=int, nargs="*"); pa.add_argument("--max", type=int, default=None)
+    pl = sub.add_parser("all-local"); pl.add_argument("path"); pl.add_argument("--name", default=None)
     args = ap.parse_args()
 
     if args.cmd == "search":
@@ -707,6 +742,8 @@ def main():
         inline_figures(args.name)
     elif args.cmd == "selftest":
         selftest()
+    elif args.cmd == "all-local":
+        all_local(args.path, args.name)
     elif args.cmd == "all":
         res, cache = search_all(args.kw, args.idx)
         ok = [r for r in res if r.get("bookUrl") and not r.get("_error")]
