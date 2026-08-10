@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-setup_env.py — BookTutor（授业）一键环境就绪。
+setup_env.py — 授业（Shouye）一键环境就绪。
 
 下载 / 克隆本项目后，先跑这一条：
     python setup_env.py
