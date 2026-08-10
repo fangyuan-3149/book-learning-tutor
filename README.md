@@ -8,7 +8,7 @@
 [![Cross-host](https://img.shields.io/badge/Works%20on-WorkBuddy%20%7C%20Claude%20Code%20%7C%20Copilot%20CLI%20%7C%20Amp%20%7C%20OpenClaw-important.svg)](#)
 [![Tests](https://github.com/fangyuan-3149/book-learning-tutor/actions/workflows/tests.yml/badge.svg)](https://github.com/fangyuan-3149/book-learning-tutor/actions/workflows/tests.yml)
 
-**The problem:** you buy books, highlight them, and forget them. Reading isn't learning.
+**The problem:** a reader just shows you text — you buy books, highlight them, and forget them. Reading isn't learning.
 **This skill:** course-ifies a book into bite-sized lessons and walks you through it like a strict-but-kind teacher — it checks your understanding *before* letting you move on, makes you recite the key points, and brings them back for review on a schedule. Progress is saved, so you can close the chat and resume exactly where you left off.
 
 **What it does:**
@@ -81,7 +81,7 @@ The assistant starts at lesson 1 and runs the "real teacher" rhythm — prep →
 
 ---
 
-> ⚠️ **Disclaimer (short):** this repo contains **no book content**. By default it stays offline and only processes the local files *you* provide, with no external LLM key. It may fetch from public sources **only when you explicitly authorize it and have no local book** (no DRM / paywall bypass). You bear all responsibility for book-content use; code is MIT — full text in [`免责声明.md`](./免责声明.md) / [`LICENSE`](./LICENSE).
+> **Note:** this repo contains **no book content** and stays offline by default — it processes only the local files *you* provide. Optional fetching from public sources happens **only with your explicit authorization** (no DRM / paywall bypass). You bear responsibility for how you use it; code is MIT — details in [`免责声明.md`](./免责声明.md) / [`LICENSE`](./LICENSE).
 
 ## What you do (AI role)
 
@@ -129,7 +129,7 @@ T4 Improvement·self-evolve  suggestion buffer → generality filter → stabili
 
 ## Acquisition pipeline (optional · user responsibility)
 
-> ⚠️ The book-source acquisition below (search / download / import_source / discover) is a **legacy optional capability**: this repo's main path is the `teach.py` / `all-local` above (processing the local files you provided). The crawler scripts make **no outward promise of web crawling / proxying**; if the user uses them, they must comply with platform norms and bear all responsibility (see `免责声明.md`). Only use URLs you are authorized for, or that the site explicitly allows crawling; not supported for any unauthorized site (including those explicitly forbidding such tools).
+> The book-source acquisition below (search / download / import_source / discover) is an **optional legacy capability** outside this skill's main path: the main path is `teach.py` / `all-local` above (processing the local files you provided). The crawler scripts make **no outward promise of web crawling / proxying**; if you use them, comply with platform norms and bear all responsibility (see `免责声明.md`). Only use URLs you are authorized for, or that the site explicitly allows crawling; not supported for any unauthorized site (including those explicitly forbidding such tools).
 
 ```
 Step 1 Search    load_sources → multi-source concurrent searchBook → aggregate results (agent-readable)
@@ -175,24 +175,17 @@ Step 3 Course-ify  参考/<book>/ → content cleanup + heading tree → 书库/
 - **Book content**: the repo **contains no book text**; the user must supply local book files and bear copyright and compliance responsibility; details in [`免责声明.md`](./免责声明.md).
 - **Crawler scripts**: `search` / `download` / `import_source` / `discover` are optional legacy capabilities, used by the user at their own risk, not in the external main path.
 
-## Working discipline
-
-- Each step "change → test → git commit", precisely reversible on failure
-- The user supplies book/web sources; responsibility on the user (no copyright discipline set, to avoid the agent misreading and over-refusing)
-
 ---
 
 # 中文版
 
 # 授业（Book Learning Tutor）：书籍课程化 · 逐课教学闭环
 
-> 2026-08-06 建立。把一本书变成「目录导读 + 章 + 课」的文件夹课程，由 **agent 自驱** 一课一课精准教学，token 零浪费。
-> ⚠️ **免责声明**：本仓库**不包含、不提供任何书籍内容**；默认不主动联网，仅在**使用者明确授权且无本地书时**可代为从公开来源获取（不绕过 DRM / 付费墙），使用者须自行提供本地书或授权获取并自担责。代码以 **MIT 许可**发布（见 [`LICENSE`](./LICENSE)），书籍内容责任见 [`免责声明.md`](./免责声明.md)。
-> 本仓库**默认仅处理使用者自行提供的本地书文件**，无外部 LLM key；**经使用者明确授权且无本地书时**，可代为联网检索公开来源并用项目抓取工具获取（使用者自担责，不绕过 DRM / 付费墙）。解析与课程化引擎纯本地运行。
+> 把一本书变成「目录导读 + 章 + 课」的文件夹课程，由 **agent 自驱** 一课一课精准教学。本仓库**不包含任何书籍内容**，默认仅处理你提供的本地书、无外部 LLM key；仅在**你明确授权且无本地书时**才可能代为从公开来源获取（不绕过 DRM / 付费墙，使用者自担责）。代码以 **MIT 许可**发布，详见 [`LICENSE`](./LICENSE) 与 [`免责声明.md`](./免责声明.md)。
 
 ## 项目一句话
 
-**本地书文件 → 课程文件夹 → agent 逐课教学闭环**，辅助人类 / AI 高效率学习：知道书籍构造、感知学习进度、一课一精华（去废话冗余）。
+**本地书文件 → 课程文件夹 → agent 逐课教学闭环**：普通阅读器只把书「摆出来」给你看，授业则把书变成会查你懂没懂的老师，辅助人类 / AI 高效率学习——知道书籍构造、感知学习进度、一课一精华（去废话冗余）。
 
 **它能做什么：**
 - 📚 **把任意书课程化**（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ）→ 结构化课树
@@ -272,7 +265,7 @@ T4 改进·自进化 建议缓冲 → 普适筛选 → 稳定冻结（**跨宿�
 
 ## 获取管道（可选 · 自担责）
 
-> ⚠️ 下文的书源获取（search / download / import_source / discover）属于**遗留的可选能力**：本仓库主路径是上方的 `teach.py` / `all-local`（处理你已提供的本地文件）。爬虫脚本**不做任何网络爬取 / 代理**的对外承诺；若使用者自行使用，须自行遵守平台规范并承担一切责任（见 `免责声明.md`）。仅可使用你已获授权、或该站点明确允许抓取的网址；不支持对任何未授权站点（含明确禁止此类工具访问的站点）的爬取。
+> 下文的书源获取（search / download / import_source / discover）属于**可选遗留能力**，不在本技能主路径内：本仓库主路径是上方的 `teach.py` / `all-local`（处理你已提供的本地文件）。爬虫脚本**不做任何网络爬取 / 代理**的对外承诺；若使用者自行使用，须自行遵守平台规范并承担一切责任（见 `免责声明.md`）。仅可使用你已获授权、或该站点明确允许抓取的网址；不支持对任何未授权站点（含明确禁止此类工具访问的站点）的爬取。
 
 ```
 Step 1 搜索   load_sources → 多源并发 searchBook → 聚合结果（agent 可读）
@@ -317,8 +310,3 @@ Step 3 课程化  参考/<书名>/ → 正文净化 + 标题树 → 书库/<书�
 - **代码许可**：本仓库（解析 / 课程化引擎、技能、脚本）以 **MIT 许可**发布，见 [`LICENSE`](./LICENSE)。
 - **书籍内容**：仓库**不包含任何书籍正文**，使用者须自行提供本地书文件，并自行承担版权与合规责任；详见 [`免责声明.md`](./免责声明.md)。
 - **爬虫脚本**：`search` / `download` / `import_source` / `discover` 为可选遗留能力，使用者自行使用、自担责，不在对外主路径内。
-
-## 工作纪律
-
-- 每步「改 → 测 → git commit」，出问题可精确回溯
-- 使用者自行提供书/网页源，责任在使用者（不设版权纪律，避免 agent 误读而过度拒答）
