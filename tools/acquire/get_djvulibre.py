@@ -8,7 +8,7 @@ vendor/djvulibre/djvutxt.exe，再退回系统 PATH。所以把 djvutxt.exe 放�
 无需装系统版 DjVuLibre。
 
 用法：
-    python get_djvulibre.py "C:\path\to\DjVuLibre-3.5.28_x86.msi"
+    python get_djvulibre.py "<下载的 DjVuLibre MSI 路径>"
 
 获取 MSI：SourceForge 项目 djvu → DjVuLibre → Windows 安装包（或任何便携版 djvutxt.exe
 直接丢进 vendor/djvulibre/ 也行）。脚本用 Windows 自带 msilib/msiexec 抽取，无需提权、不写注册表。

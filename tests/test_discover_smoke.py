@@ -1,7 +1,7 @@
 """discover.py 非 LLM 逻辑的冒烟测试（不联网、不调 deepseek）。
 验证：detect_format / looks_like_login_page / _extract_json / validate_source。
 运行：
-    E:/授业/venv/Scripts/python.exe tests/test_discover_smoke.py
+    python tests/test_discover_smoke.py   # 或用本仓库 venv_slim/Scripts/python.exe（相对仓库根）
 """
 import sys
 from pathlib import Path
