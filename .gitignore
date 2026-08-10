@@ -16,9 +16,9 @@ data/
 .workbuddy/*
 !.workbuddy/skills/
 .workbuddy/skills/*
-!.workbuddy/skills/shouye/
-.workbuddy/skills/shouye/*
-!.workbuddy/skills/shouye/SKILL.md
+!.workbuddy/skills/book-learning-tutor/
+.workbuddy/skills/book-learning-tutor/*
+!.workbuddy/skills/book-learning-tutor/SKILL.md
 !.workbuddy/skills/learning-assistant/
 .workbuddy/skills/learning-assistant/*
 !.workbuddy/skills/learning-assistant/SKILL.md

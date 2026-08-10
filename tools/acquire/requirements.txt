@@ -1,4 +1,4 @@
-# BookTutor（授业）—— 引擎依赖统一说明
+# Book Learning Tutor（授业）—— 引擎依赖统一说明
 #
 # 本仓库的**唯一依赖真相源**是仓库根 `requirements.txt`（核心）+
 # `requirements-extra.txt`（在线书源 / 爬虫可选）。

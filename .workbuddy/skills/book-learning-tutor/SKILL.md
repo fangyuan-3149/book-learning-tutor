@@ -1,5 +1,5 @@
 ---
-name: 授业 (Shouye)
+name: 授业 (Book Learning Tutor)
 description: 把使用者自行提供的本地书（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ）或本地资料课程化，并逐课交互式带人类学习。当用户说「学这本书 <本地路径> / 把这本 PDF 课程化 / 教我这本书」时调用。本技能不联网、不爬取、不提供任何书源或网页源，仅处理使用者已提供的本地文件。
 agent_created: true
 ---
@@ -35,6 +35,8 @@ agent_created: true
 Python 使用本仓库精简 venv（已含 bs4 等教学依赖，体积 ~81MB）：
 `./venv_slim/Scripts/python.exe`（位于仓库根；若自行部署可改用任意含依赖的 Python）。
 命令均使用相对路径，克隆到任意目录都能直接跑。
+
+> **跑到哪一层？** 命令在「含 `tools/` 的目录」下执行即可——克隆的仓库根，或本技能被安装到用户级（`~/.workbuddy/skills/book-learning-tutor/`）时即在该技能目录内执行。其中 `teach.py` 会自动定位同目录下的 `tools/` 引擎，无需关心绝对路径。
 
 ### 1. 本地一键（推荐）
 

@@ -1,10 +1,10 @@
 ---
 name: learning-assistant
-description: "自适应教学引擎，与授业(Shouye)融合为专业教师整体。当用户说'教我这本书'/'继续学 <书>'/'复习 <书>'/'考考我 <书>'，或授业课程需补强时加载。像真老师一样：课前检索备课→详尽费曼教学→课后按薄弱布置写/背/实践作业，每课规划必背知识并分阶段背诵。保留全套：智能补强(搜索/arxiv/project-code)、练习闸门、自适应、间隔复习、学习习惯档案、自进化(逻辑保留,执行层门控)。存储全在技能目录内。"
+description: "自适应教学引擎，与授业(Book Learning Tutor)融合为专业教师整体。当用户说'教我这本书'/'继续学 <书>'/'复习 <书>'/'考考我 <书>'，或授业课程需补强时加载。像真老师一样：课前检索备课→详尽费曼教学→课后按薄弱布置写/背/实践作业，每课规划必背知识并分阶段背诵。保留全套：智能补强(搜索/arxiv/project-code)、练习闸门、自适应、间隔复习、学习习惯档案、自进化(逻辑保留,执行层门控)。存储全在技能目录内。"
 version: 3.3.1-real-teacher
 author: Hermes Agent (融合授业 by WorkBuddy)
 license: MIT
-tags: [learning, adaptive, feynman, teaching-engine, shouye-fused, self-evolving, lesson-planning]
+tags: [learning, adaptive, feynman, teaching-engine, book-learning-tutor-fused, self-evolving, lesson-planning]
 ---
 
 # Learning Assistant（授业融合 · 真老师教学引擎）
