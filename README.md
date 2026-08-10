@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](./requirements.txt)
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-Open%20Standard-9cf.svg)](#)
 [![Cross-host](https://img.shields.io/badge/Works%20on-WorkBuddy%20%7C%20Claude%20Code%20%7C%20Copilot%20CLI%20%7C%20Amp%20%7C%20OpenClaw-important.svg)](#)
+[![Tests](https://github.com/fangyuan-3149/book-learning-tutor/actions/workflows/tests.yml/badge.svg)](https://github.com/fangyuan-3149/book-learning-tutor/actions/workflows/tests.yml)
 
 **The problem:** you buy books, highlight them, and forget them. Reading isn't learning.
 **This skill:** course-ifies a book into bite-sized lessons and walks you through it like a strict-but-kind teacher — it checks your understanding *before* letting you move on, makes you recite the key points, and brings them back for review on a schedule. Progress is saved, so you can close the chat and resume exactly where you left off.
