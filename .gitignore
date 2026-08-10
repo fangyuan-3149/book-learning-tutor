@@ -19,16 +19,13 @@ data/
 !.workbuddy/skills/book-learning-tutor/
 .workbuddy/skills/book-learning-tutor/*
 !.workbuddy/skills/book-learning-tutor/SKILL.md
-!.workbuddy/skills/learning-assistant/
-.workbuddy/skills/learning-assistant/*
-!.workbuddy/skills/learning-assistant/SKILL.md
-!.workbuddy/skills/learning-assistant/references/
-!.workbuddy/skills/learning-assistant/references/*
-!.workbuddy/skills/learning-assistant/storage/
-.workbuddy/skills/learning-assistant/storage/*
-!.workbuddy/skills/learning-assistant/storage/习惯.md
+!.workbuddy/skills/book-learning-tutor/references/
+!.workbuddy/skills/book-learning-tutor/references/*
+!.workbuddy/skills/book-learning-tutor/storage/
+.workbuddy/skills/book-learning-tutor/storage/*
+!.workbuddy/skills/book-learning-tutor/storage/习惯.md
 # 运行时按书名生成的学习数据（含隐私/进度）不入库
-.workbuddy/skills/learning-assistant/storage/*/
+.workbuddy/skills/book-learning-tutor/storage/*/
 tools_dev/
 
 # 临时
