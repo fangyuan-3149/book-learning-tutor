@@ -1,35 +1,77 @@
-# Book Learning Tutor (授业): Course-ify Books · Lesson-by-Lesson Teaching Loop
+# Book Learning Tutor (授业)
 
-> Established 2026-08-06. Turns a book into a folder-based course ("TOC guide" + chapters + lessons), taught lesson by lesson by an **agent-driven** teacher — zero token waste.
-> ⚠️ **Disclaimer**: this repo **contains and provides no book content**; by default it does not go online on its own, and only when **the user explicitly authorizes and has no local book** may it fetch from public sources on their behalf (without bypassing DRM / paywalls); the user must supply a local book or authorize acquisition and bear the responsibility. Code is released under **MIT** (see [`LICENSE`](./LICENSE)); book-content responsibility in [`免责声明.md`](./免责声明.md).
-> By default this repo **only processes the local book files the user supplies**, with no external LLM key; **when the user explicitly authorizes and has no local book**, it may search public sources and fetch via the project's acquisition tools (user bears responsibility, no DRM / paywall bypass). The parsing and course-ification engine runs purely locally.
+> Turn any book on your drive into a **personal AI tutor** that actually teaches — lesson by lesson, with Feynman explanations, practice gates, spaced review, and recitation homework. **Your book never leaves your machine.**
 
-## One-line summary
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](./requirements.txt)
+[![Agent Skills](https://img.shields.io/badge/Agent%20Skills-Open%20Standard-9cf.svg)](#)
+[![Cross-host](https://img.shields.io/badge/Works%20on-WorkBuddy%20%7C%20Claude%20Code%20%7C%20Copilot%20CLI%20%7C%20Amp%20%7C%20OpenClaw-important.svg)](#)
 
-**Local book file → course folder → agent lesson-by-lesson teaching loop**, helping humans / AI learn efficiently: understand the book's structure, sense learning progress, one essence per lesson (no fluff).
+**The problem:** you buy books, highlight them, and forget them. Reading isn't learning.
+**This skill:** course-ifies a book into bite-sized lessons and walks you through it like a strict-but-kind teacher — it checks your understanding *before* letting you move on, makes you recite the key points, and brings them back for review on a schedule. Progress is saved, so you can close the chat and resume exactly where you left off.
+
+---
+
+## ▶ See it teach (real session)
+
+*The material below is a real lesson the skill generates — from* Flatland *(public domain). This is what the teaching loop feels like:*
+
+**📚 Lesson 1 — "Of the Nature of Flatland"** · *prep sheet: level = intuitive · must-memorize 📌: Flatland is 2D; inhabitants appear to each other only as straight lines; the penny-on-table analogy*
+
+> **Teacher:** Flatland is a world with only **two dimensions** — length and width, no "up". Its people are living geometric shapes (triangles, squares, circles) who slide around on a flat surface but can never rise above or sink below it.
+>
+> Here's the part that trips everyone up: **in Flatland, you can't see shapes — you only see straight lines.** Watch: put a penny on a table and look down — it's a circle. Now lower your eye to the table's edge, the way a Flatlander would see. The penny collapses into a single straight line. A triangle, a square, a hexagon — all look identical from the edge: just a line of varying length.
+>
+> **Teacher:** So how do Flatlanders tell a Triangle from a Square? *(practice gate)*
+>
+> **You:** They can't by sight alone — they feel edges by touch, or sense the angle as a figure moves past?
+>
+> **Teacher:** 🔒 **Gate passed (≥80%).** Exactly — recognition is by touch/angle, not vision. That's why the social order (shape = class) is both rigid *and* invisible. **Must-memorize 📌:** *no "up" exists; sight shows only a line.*
+>
+> **📝 Homework:** write one sentence explaining why a Sphere visiting Flatland would be invisible until it intersects the plane. **🗣 Recite:** the penny analogy, from memory, next lesson.
+
+`progress.json` ← lesson 1 marked `learned`, mastery 0.8; chat closed. Next session, *"continue Flatland"* resumes at lesson 2 and reviews lesson 1 first.
+
+> 📂 A full real sample (TOC guide + lesson 1, from *Flatland*) is browsable in [`examples/flatland/`](./examples/flatland/) — no install needed.
+
+---
+
+## Install
+
+```bash
+git clone https://github.com/fangyuan-3149/book-learning-tutor.git
+cd book-learning-tutor
+python setup_env.py            # builds the slim venv (venv_slim/) with all dependencies
+# copy the skill into your agent (pick the host you use):
+cp -r . ~/.workbuddy/skills/book-learning-tutor/        # WorkBuddy
+# cp -r . ~/.claude/skills/book-learning-tutor/         # Claude Code
+# cp -r . ~/.config/amazonq/skills/book-learning-tutor/ # Copilot CLI / Amp / OpenClaw (path varies)
+```
 
 ## Quick start (3 steps)
 
-> Prerequisite: first run `python setup_env.py` to build the slim venv (`venv_slim/`) with all dependencies (see [`setup_env.py`](./setup_env.py) and `requirements.txt`); afterward all commands are relative to the repo root and run from any cloned directory.
+**1. Prepare a local book** (PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ) — you supply it; you own the responsibility.
 
-**1. Prepare a local book** (PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ) — supplied by the user, responsibility on the user.
-
-**2. One-shot course-ify** (extract → convert to markdown → generate course):
+**2. One-shot course-ify:**
 
 ```bash
 python teach.py "<local book path>/your book.pdf"
-# or stepwise: python tools/acquire/pipeline.py all-local "<local book path>/your book.pdf"
+# or: python tools/acquire/pipeline.py all-local "<local book path>/your book.pdf"
 ```
 
-On finish it generates "TOC guide + chapters/lessons + progress.json" in `书库/<book>/`.
+It writes a TOC guide + chapter/lesson folders + `progress.json` into `书库/<book>/`.
 
-**3. Start lesson-by-lesson teaching** — just say to the assistant:
+**3. Start the teaching loop** — just say to your assistant:
 
 ```
 teach me this book <book>
 ```
 
-The assistant starts from lesson 1 and walks you through with the "real teacher" rhythm — prep → Feynman teaching → practice gate (≥80%) → homework (write/memorize/practice) → recitation checkpoint → spaced review; progress is permanently stored in `书库/<book>/progress.json` and resumes even in a new chat.
+The assistant starts at lesson 1 and runs the "real teacher" rhythm — prep → Feynman → practice gate (≥80%) → homework (write/memorize/practice) → recitation → spaced review. Progress lives in `书库/<book>/progress.json` and resumes even in a new chat.
+
+---
+
+> ⚠️ **Disclaimer (short):** this repo contains **no book content**. By default it stays offline and only processes the local files *you* provide, with no external LLM key. It may fetch from public sources **only when you explicitly authorize it and have no local book** (no DRM / paywall bypass). You bear all responsibility for book-content use; code is MIT — full text in [`免责声明.md`](./免责声明.md) / [`LICENSE`](./LICENSE).
 
 ## What you do (AI role)
 
