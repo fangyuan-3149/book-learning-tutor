@@ -1,7 +1,19 @@
-# 授业 · 获取引擎运行时依赖（tools/acquire）
-# 安装：venv/Scripts/python -m pip install -r tools/acquire/requirements.txt
-httpx>=0.27          # L1 抓取层（HTTP/2 可选、UA 池、cookie 会话、POST 三形式、鲁棒解码）
-beautifulsoup4>=4.12 # HTML 解析（rules.py 默认解析器）
-lxml>=5.0            # XPath 规则支持（rules.py eval_xpath）
-pycryptodome>=3.20   # JS桥源转纯L1：复刻规则里的 java.* AES/DES/base64/md5 加解密·签名
-PyExecJS>=1.5.1       # @js:/{{java.*}} 片段求值桥（后端用本机 Node，无浏览器、无外部key）
+# 授业 · 运行时依赖（slim，重建于 2026-08-10）
+# 安装：python -m venv venv && venv/Scripts/python -m pip install -r tools/acquire/requirements.txt
+#
+# 教学主路径（all-local → ingest/convert/course_gen/progress）必需：
+PyMuPDF==1.24.14        # PDF/DJVU 抽取与插图（唯一大依赖 ~46MB）
+beautifulsoup4==4.15.0  # HTML 清洗（book_formats / pipeline）
+EbookLib==0.20          # EPUB 解析
+python-docx==1.2.0      # DOCX 解析
+mobi==0.4.1             # MOBI/AZW 解析
+# 爬虫轨道（用户保留，非教学主路径但保持可用）：
+httpx==0.28.1           # L1 抓取层（HTTP/2、UA 池、会话、鲁棒解码）
+lxml==6.1.1             # XPath 规则（rules.py eval_xpath）
+pycryptodome==3.23.0    # JS 桥源 java.* AES/DES/base64/md5 加解密·签名
+PyExecJS==1.5.1         # @js:/{{java.*}} 片段求值桥（需本机 Node，无浏览器无 key）
+#
+# 说明：本环境曾误装 torch / transformers / cv2(OpenCV) / scipy / pandas /
+#       sklearn / sympy / matplotlib / onnxruntime / polars / botocore 等约 1.4GB
+#       无关包，均未在 tools/ 中被 import（见占用分析），已从 slim venv 剔除。
+#       重建后 venv 由 ~1.6GB 降至 ~80MB。上面的版本号与旧 venv 中已验证版本一致。
