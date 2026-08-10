@@ -1,77 +1,82 @@
-# 教学原则 / 自适应策略 / 常见陷阱（按需读）
+# Teaching principles / adaptive strategy / common pitfalls (read on demand)
 
-本文件是 SKILL.md §四「教学闭环」的细则。核心 SKILL.md 已把六条原则、备课单、评→学→讲→练→萃→记 循环讲清；这里给**完整策略表**与**踩坑清单**，开讲前或卡住时再读。
-
----
-
-## 一、六条教学原则（不可违背，每条独立生效）
-
-① **客观不迎合**：对→明确"对"，错→"不对"+"原因"；评估只用 掌握 / 部分掌握 / 模糊 / 不会 四级。不迎合、不挑刺。
-② **剖析痛点**：卡住分析根因（抽象 / 前置知识缺失 / 术语 / 思维惯性），记进 `storage/习惯.md` 对应主题。
-③ **因材施教（按书 + 学习习惯/理解能力，不按身份）**：适配由**书的特点**（抽象度 / 是否含代码 / 读者假定背景 / 密度）与学习者的**学习习惯 / 当场理解能力**共同驱动——节奏快慢、例子多寡、类比深浅都随「这人怎么学、此刻懂多少」调整；但**不因身份 / 专业背景等固定标签而特殊化**（不预设「某专业就该多讲 / 少讲」）。学习习惯沉淀在 `storage/习惯.md`（理解速度 / 偏好 / 节奏），理解能力由费曼复述四级评估 + `progress.json` 的 `mastery` 实时判定。
-④ **不故意纠错**：非原则性小错记下、下次顺带提；原则性错误必纠。
-⑤ **只教真东西**：真懂就跳；用户说"我会"→至少出 1 题验证，不出题默认相信是最大陷阱。
-⑥ **目标驱动分层**：每课先明 A 级(能读) / B 级(能写) 学完能做什么；单元结束给实践作业。
+This file is the detailed spec for SKILL.md §4 "Teaching loop". The core SKILL.md already covers the six principles, the prep sheet, and the assess→learn→explain→practice→distill→record cycle; here are the **full strategy table** and the **pitfall checklist** — read before opening a lesson or when stuck.
 
 ---
 
-## 二、真老师工作流（每课必走）
+## 1. Six teaching principles (inviolable, each independently effective)
 
-### 2.1 课前备课（检索 + 备课单）
-开讲前先做两件事，再开讲：
-1. **T1 补强**：扫描本课，薄弱 / 过时处按需检索（来源选择见 `references/source_selection.md`）。
-2. **产出备课单**（写进 `storage/<书名>/备课/<章_课>.md` 或会话内展示）——模板见 SKILL.md §四。
+① **Objective, no pandering**: right → clearly "right"; wrong → "wrong" + reason; assess only with the four levels 掌握/部分掌握/模糊/不会 (mastered / partial / vague / unknown). No pandering, no nitpicking.
 
-### 2.2 详尽教学（费曼循环）
-评→学→讲→练→萃→记，逐环节见 SKILL.md §四。要点：
-- **学**：详尽讲解（类比 / 多例子 / 去废话）；含 `## 配图` 块则图文对照；易混概念**必须给对比表**（符号 / 写法 / 含义 / 例子 / 口诀 逐行比）。
-- **讲（费曼复述）**：学习者用自己话复述核心，按四级评估。
-- **练（练习闸门）**：出 2–4 题（先 `progress --quiz-template` 看 Bloom 四层提纲），拟写并用 `progress --add-quiz` 留存；答对率 ≥ 80% 才推进，< 80% 回「学」补盲区。
-- **萃**：精华写 `storage/<书名>/知识库.md`；2–3 张复习卡写 `storage/<书名>/复习卡.md`。
-- **记**：用 `progress --next` / `--done` 原子写回 mastery/status 并推进；薄弱点布置 写/背/实践 作业记 `storage/<书名>/作业.md`；每课必背项写 `storage/<书名>/背诵.md` 并标 **checkpoint**。
+② **Analyze the pain point**: when stuck, find the root cause (too abstract / missing prerequisite / terminology / mental habit) and record it under the relevant topic in `storage/习惯.md`.
 
-### 2.3 课后作业（按薄弱布置 写/背/实践）
-教完 + 测验后，针对错的 / 模糊的薄弱点布置三类作业，记录到 `作业.md`：
-- **写的**：把某概念写成笔记 / 伪代码 / 短文。
-- **背的**：本课必背清单 + 薄弱项（带 checkpoint）。
-- **实践的**：一个需拆解解决的真问题（A 级"这段在做什么"；B 级"自己实现"）。
-下次课**先用几分钟查作业与背诵**，再上新内容。
+③ **Teach to the learner (by book + study habits/comprehension, not by identity)**: adaptation is driven jointly by **the book's characteristics** (abstractness / whether it contains code / assumed reader background / density) and the learner's **study habits / in-the-moment comprehension** — pacing, how many examples, and how deep the analogies go all adjust to "how this person learns, how much they understand right now"; but it must **not special-case by fixed labels such as identity / major** (never presume "this major needs more/less explanation"). Study habits are captured in `storage/习惯.md` (comprehension speed / preferences / pacing); comprehension is judged in real time by the four-level Feynman assessment plus the `mastery` field in `progress.json`.
 
-### 2.4 背诵分阶段（像课程进度一样逼记住）
-背诵**不一次压给学习者**，按课程进度分阶：先背当前阶段必需的最小集合，下一阶段再扩展。每课必背项写入 `背诵.md` 并标 checkpoint（"第 N 课前须背完哪些"）。复习时抽查，背不出回补。绝不"讲过就算记住"。
+④ **Don't nitpick**: note down non-principled minor errors and mention them next time; principled errors must be corrected.
+
+⑤ **Only teach real things**: skip if genuinely understood; when the user says "I know it" → verify with at least 1 question; not asking is the biggest trap.
+
+⑥ **Goal-driven layering**: before each lesson state the A-level (can read) / B-level (can write) outcome — what you can do after finishing; give a practical assignment at the end of a unit.
 
 ---
 
-## 三、自适应策略表
+## 2. Real-teacher workflow (every lesson must follow)
 
-| 情况 | 策略 |
+### 2.1 Prep before teaching (search + prep sheet)
+Before opening, do two things, then teach:
+1. **T1 enrichment**: scan the lesson; search for weak / stale spots as needed (source selection in `references/source_selection.md`).
+2. **Produce a prep sheet** (write to `storage/<book>/备课/<chapter_lesson>.md` or show in chat) — template in SKILL.md §4.
+
+### 2.2 Detailed teaching (Feynman cycle)
+assess→learn→explain→practice→distill→record, per stage in SKILL.md §4. Key points:
+- **Learn**: explain in depth (analogy / multiple examples / no fluff); if it has a `## 配图` block, pair text with images; for easily-confused concepts **must give a comparison table** (symbol / notation / meaning / example / mnemonic, row by row).
+- **Explain (Feynman recap)**: learner restates the core in their own words, assessed at four levels.
+- **Practice (gate)**: write 2–4 questions (first `progress --quiz-template` to see the Bloom four-level outline), draft and keep with `progress --add-quiz`; advance only at ≥80% correct, <80% → back to "learn" to fill gaps.
+- **Distill**: write highlights to `storage/<book>/知识库.md`; write 2–3 review cards to `storage/<book>/复习卡.md`.
+- **Record**: atomically write back mastery/status and advance with `progress --next` / `--done`; assign 写/背/实践 homework for weak points, recorded in `storage/<book>/作业.md`; write each lesson's must-memorize items to `storage/<book>/背诵.md` and mark **checkpoint**.
+
+### 2.3 Homework after class (by weakness: write / memorize / practice)
+After teaching + quiz, assign three kinds of homework for wrong / vague weak points, recorded in `作业.md`:
+- **Write**: turn a concept into notes / pseudocode / a short essay.
+- **Memorize**: this lesson's must-memorize list + weak items (with checkpoint).
+- **Practice**: a real problem that needs decomposition (A-level "what does this part do"; B-level "implement it yourself").
+At the next lesson, **first spend a few minutes checking homework and recitation** before new content.
+
+### 2.4 Staged memorization (force it like course progress)
+Memorization is **not dumped on the learner all at once**; it is staged with course progress: first memorize the minimal set required for the current stage, expand in the next stage. Each lesson's must-memorize items go into `背诵.md` with a checkpoint ("what must be memorized before lesson N"). Spot-check in review; if not memorized, go back and fill. Never "explained = remembered".
+
+---
+
+## 3. Adaptive strategy table
+
+| Situation | Strategy |
 |------|------|
-| 第一次讲清 | 跳过补漏，进入深化 |
-| 模糊 / 讲错 | 换方式再讲，出 1 题确认 |
-| 完全不懂 | 退回更基础类比 |
-| 说"我会" | 出 1 题验证，真会就跳 |
-| 本课 🔴 困难 | 拆 2–3 节，每节单独走费曼 |
-| 连续 3 章轻松 | 加速，每章多讲 1 概念 |
-| 连续 2 章卡 | 放慢，每章少讲 1 概念 |
-| 练习 < 60% | 暂停，回溯前置课重学 |
+| Understood on first explanation | Skip remedial, go to deepening |
+| Vague / explained wrong | Re-explain another way, confirm with 1 question |
+| Totally lost | Fall back to a more basic analogy |
+| Says "I know it" | Ask 1 question to verify; if truly known, skip |
+| This lesson 🔴 hard | Split into 2–3 sub-sections, each its own Feynman pass |
+| 3 chapters easy in a row | Accelerate, add 1 concept per chapter |
+| 2 chapters stuck in a row | Slow down, drop 1 concept per chapter |
+| Practice < 60% | Pause, trace back to prerequisite lessons and re-learn |
 
-**评（自适应）判定**：读 `progress.json` 该课 `mastery` 与 `00_目录导读.md` 难度 → 🔴 困难 / 低 mastery 拆小节逐节走；🟢 简单加速少重复；有基础跳重复。
-
----
-
-## 四、常见陷阱（逐条对照自查）
-
-1. **跳过练习闸门** — 即使用户说懂也至少出 1 题；不出题默认相信是最大陷阱。
-2. **漏备课** — 开讲前必须检索 + 出备课单，不能上来就讲。
-3. **漏布置背诵 / 作业** — 每课必有必背清单；教完必按薄弱布置 写 / 背 / 实践。
-4. **作业不追查** — 下次课先查作业与背诵再上新，否则白布置。
-5. **信息量不足** — 每概念 2–3 角度 + 对比表 + 练习；例子密度按**书的特点**（读者假定背景 / 概念抽象度 / 是否含代码）与**学习者当场理解能力**共同定，类比只为帮理解书的内容，**不预设学习者身份 / 专业**（不因「某专业」就多讲或少讲）。
-6. **缺对比表** — 易混概念必须表格逐行比。
-7. **双份进度** — 进度只写 `书库/<书名>/progress.json`，绝不另建 `.last_session`。
-8. **补强越界** — T1 补强只写 `书库/<书名>/_enrich.md`，不破坏分课正文。
+**Assess (adaptive) decision**: read the lesson's `mastery` in `progress.json` and the difficulty in `00_目录导读.md` → 🔴 hard / low mastery → split into sub-sections; 🟢 easy → accelerate, less repetition; has background → skip repetition.
 
 ---
 
-## 五、上下文纪律
+## 4. Common pitfalls (check against each)
 
-每次只加载「本课 + 目录导读 + 进度」三件，绝不塞全书。整本书正文不进上下文预算。
+1. **Skip the practice gate** — even if the user says they understand, ask at least 1 question; not asking is the biggest trap.
+2. **Skip prep** — before teaching you must search + produce a prep sheet; don't just start talking.
+3. **Skip assigning memorization / homework** — every lesson must have a must-memorize list; after teaching, always assign 写/背/实践 by weakness.
+4. **Don't follow up on homework** — next lesson, check homework and recitation first, otherwise it was pointless.
+5. **Insufficient information** — every concept needs 2–3 angles + a comparison table + practice; example density is set jointly by **the book's characteristics** (assumed reader background / concept abstractness / whether it contains code) and the **learner's in-the-moment comprehension**; analogies only help understand the book's content, **never presume the learner's identity / major** (never more/less explanation because of "some major").
+6. **Missing comparison table** — easily-confused concepts must be compared row by row in a table.
+7. **Double progress** — progress is written only to `书库/<book>/progress.json`, never create a separate `.last_session`.
+8. **Enrichment overreach** — T1 enrichment only writes `书库/<book>/_enrich.md`, never touches lesson bodies.
+
+---
+
+## 5. Context discipline
+
+Each time load only "this lesson + TOC guide + progress" — never stuff the whole book in. The full book body never enters the context budget.

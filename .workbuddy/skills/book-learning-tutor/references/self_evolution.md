@@ -1,25 +1,25 @@
-# T4 改进 · 自进化细则（按需读）
+# T4 Improvement · Self-evolution spec (read on demand)
 
-保留完整方法论（建议缓冲 → 普适性筛选 → 稳定性标记 → 决策树）。**跨宿主一致**：本技能不依赖任何宿主自带的 skill 写回工具，把通过普适性检查的建议留在 `storage/<书名>/教学笔记.md`，由使用者 / agent 人工筛选后固化到 SKILL.md（详见本仓库 `README.md` 的「获取管道 / 自进化」说明）。
+Keeps the full methodology (suggestion buffer → generality filter → stability marker → decision tree). **Consistent across hosts**: this skill does not rely on any host-specific skill write-back tool; suggestions that pass the generality check are left in `storage/<book>/教学笔记.md`, and the user / agent manually vets them before hardening into SKILL.md (see the "Acquisition pipeline / self-evolution" section of this repo's `README.md`).
 
-## 1. 建议收集（缓冲区）
-教学中识别可改进处 → 记入 `storage/<书名>/教学笔记.md`。例：用户反应"类比更易懂"→建议多用类比；用户忘昨天内容→建议每学新课前加 3 分钟复习。
+## 1. Suggestion collection (buffer)
+During teaching, spot improvable points → record in `storage/<book>/教学笔记.md`. Example: user reacts "analogies are easier to understand" → suggest using more analogies; user forgot yesterday's content → suggest adding a 3-minute review before each new lesson.
 
-## 2. 普适性筛选（3 问）
-① 只对当前用户有效，还是对大多数学员有效？ → 只当前→写 `storage/习惯.md`；大多数学员→下一步。
-② 在 3 个不同章节/主题下都成立？ → 是→下一步；否→继续观察（标记"观察中"）。
-③ 和现有规则冲突？ → 不冲突→写 SKILL.md；冲突→合并/替换旧规则。
+## 2. Generality filter (3 questions)
+① Only effective for the current user, or effective for most learners? → only current → write to `storage/习惯.md`; most learners → next step.
+② Holds across 3 different chapters/topics? → yes → next step; no → keep observing (mark "observing").
+③ Conflicts with an existing rule? → no conflict → write to SKILL.md; conflict → merge/replace the old rule.
 
-## 3. 稳定性标记
-🆕 新增 → ⏳ 观察中（用 1–2 次）→ ✅ 稳定（连续 3 次有效）→ 🔒 无需改动（连续 5 次无修改）。
-一条规则连续 3 次有效→标 ✅；连续 5 次无新建议→标 🔒，除非用户要求不再改。
+## 3. Stability marker
+🆕 new → ⏳ observing (use 1–2 times) → ✅ stable (effective 3 times in a row) → 🔒 no change needed (no modification 5 times in a row).
+A rule effective 3 times in a row → mark ✅; no new suggestion 5 times in a row → mark 🔒, unless the user asks to stop changing.
 
-## 4. 决策树
-临时问题忽略；可复用进缓冲→观察→普适检查→写 SKILL.md / 写习惯.md→标记→稳定/冻结。
+## 4. Decision tree
+Ignore transient issues; reusable → buffer → observe → generality check → write SKILL.md / write 习惯.md → mark → stable / frozen.
 
-## 5. 知识库自动维护（会话结束必做）
-1. 更新进度（progress.json 已写回则跳过）。
-2. 学了新函数/方法 → 追加 `storage/<书名>/背诵.md` 对应条目（标 📌/📖）。
-3. 更新 `storage/<书名>/复习卡.md`（如有新卡）。
-4. 更新 `storage/习惯.md`（实际用时/理解速度/偏好/节奏）。
-5. 跨会话：progress.json.current 即续学位置，无需另建。
+## 5. Knowledge-base auto-maintenance (must do at session end)
+1. Update progress (skip if progress.json already written back).
+2. Learned a new function/method → append the corresponding entry to `storage/<book>/背诵.md` (mark 📌/📖).
+3. Update `storage/<book>/复习卡.md` (if new cards).
+4. Update `storage/习惯.md` (actual time spent / comprehension speed / preferences / pacing).
+5. Cross-session: `progress.json.current` is the resume position; no separate file needed.

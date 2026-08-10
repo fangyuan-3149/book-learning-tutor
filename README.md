@@ -1,3 +1,137 @@
+# Book Learning Tutor (授业): Course-ify Books · Lesson-by-Lesson Teaching Loop
+
+> Established 2026-08-06. Turns a book into a folder-based course ("TOC guide" + chapters + lessons), taught lesson by lesson by an **agent-driven** teacher — zero token waste.
+> ⚠️ **Disclaimer**: this repo **contains and provides no book content**; by default it does not go online on its own, and only when **the user explicitly authorizes and has no local book** may it fetch from public sources on their behalf (without bypassing DRM / paywalls); the user must supply a local book or authorize acquisition and bear the responsibility. Code is released under **MIT** (see [`LICENSE`](./LICENSE)); book-content responsibility in [`免责声明.md`](./免责声明.md).
+> By default this repo **only processes the local book files the user supplies**, with no external LLM key; **when the user explicitly authorizes and has no local book**, it may search public sources and fetch via the project's acquisition tools (user bears responsibility, no DRM / paywall bypass). The parsing and course-ification engine runs purely locally.
+
+## One-line summary
+
+**Local book file → course folder → agent lesson-by-lesson teaching loop**, helping humans / AI learn efficiently: understand the book's structure, sense learning progress, one essence per lesson (no fluff).
+
+## Quick start (3 steps)
+
+> Prerequisite: first run `python setup_env.py` to build the slim venv (`venv_slim/`) with all dependencies (see [`setup_env.py`](./setup_env.py) and `requirements.txt`); afterward all commands are relative to the repo root and run from any cloned directory.
+
+**1. Prepare a local book** (PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ) — supplied by the user, responsibility on the user.
+
+**2. One-shot course-ify** (extract → convert to markdown → generate course):
+
+```bash
+python teach.py "<local book path>/your book.pdf"
+# or stepwise: python tools/acquire/pipeline.py all-local "<local book path>/your book.pdf"
+```
+
+On finish it generates "TOC guide + chapters/lessons + progress.json" in `书库/<book>/`.
+
+**3. Start lesson-by-lesson teaching** — just say to the assistant:
+
+```
+teach me this book <book>
+```
+
+The assistant starts from lesson 1 and walks you through with the "real teacher" rhythm — prep → Feynman teaching → practice gate (≥80%) → homework (write/memorize/practice) → recitation checkpoint → spaced review; progress is permanently stored in `书库/<book>/progress.json` and resumes even in a new chat.
+
+## What you do (AI role)
+
+1. **Prepare the source book**: the user supplies a local book file (PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ); the skill extracts chapters → 参考/<book>/
+2. **Course-ify**: `tools/structure/course_gen.py` consumes 参考/<book>/ directly → chapter/lesson folders + TOC guide → `书库/<book>/` (no intermediate 预处理/)
+3. **Lesson-by-lesson teaching loop**: agent-driven (explain → ask → resolve → quiz → check mastery → advance), progress in progress.json
+
+## Architecture iron rules (user-finalized, must hold)
+
+- **Pure-local parsing first**; the external skill does **no web crawling / proxying**. Book-source crawling is a legacy capability, outside the external skill's scope; if the user uses it themselves they bear responsibility (see `免责声明.md`).
+- **Zero external LLM key**: every "intelligent" step (writing source rules, teaching lesson by lesson) is done by the agent itself; tools only do deterministic work (fetch / replay-verify / persist / pipeline orchestration).
+- **The Skill is the only external interface**: other agents only need to know "how to invoke the Skill" + "output lands in `书库/<book>/`", and don't touch internal engine details.
+
+## Core spec · book-library structure (user-finalized)
+
+```
+书库/
+└── <book>/
+    ├── 00_目录导读.md            # whole-book navigation: chapter→lesson index + concept summary
+    ├── 第01章_<chapter>/
+    │   ├── 第01课_<lesson>.md      # teaching unit (finest grain within a chapter)
+    │   └── ...
+    └── progress.json             # progress state (per chapter-lesson: learned/mastery)
+```
+
+- **No subdivision below chapter/lesson**: a lesson = the smallest teaching unit (a file may contain sub-concepts internally, but no sub-folder).
+- Numbered naming (`第01章_章名` / `第01课_课名`) → stable sort, predictable path.
+- Model lesson selection: read only "this lesson + TOC guide + progress" at a time, never the rest of the book.
+
+## Teaching engine: Book Learning Tutor single self-contained professional teacher
+
+One skill contains the full teaching engine — material production (what to teach) + prep / Feynman / practice gate / adaptation / spaced review / recitation homework / self-evolution (teach understandably + deeply + force memorization). **No other skill needs loading during teaching**, avoiding "only half loaded → degraded teaching". Timeline:
+
+```
+T0 Material production   book → 书库/<book>/ (TOC guide + lesson bodies + figure blocks + progress.json)  deterministic backbone
+T1 Smart enrichment       scan weak/stale → search/arxiv/project-code/official docs → write _enrich.md (no break main course)
+T2 Real-teacher teaching  prep search → detailed Feynman → practice gate (≥80%) → post-class homework by weakness (write/memorize/practice)
+T3 Review·homework check  spaced review (review cards) + check homework & recitation next lesson
+T4 Improvement·self-evolve  suggestion buffer → generality filter → stability freeze (cross-host consistent: suggestions first to teaching notes, manually hardened, no host-specific write-back tool)
+```
+
+**Real-teacher workflow (every lesson)**: ① prep search + prep sheet (target level / core concepts / **must-memorize 📌** / extension / example plan / homework plan); ② detailed Feynman teaching (figure pairing, confusion comparison table, practice gate ≥80% to advance); ③ post-class assign **write / memorize / practice** homework by weakness (in `作业.md`, check first next time); ④ staged memorization (each lesson's must-memorize in `背诵.md` + checkpoint, forced like course progress).
+
+> Teaching outputs (prep / review cards / recitation / knowledge base / homework / teaching notes / learner profile) all live in **`storage/` inside the skill dir** (auto-adapts to install location, consistent across hosts), not polluting the book library; course-level progress is always `书库/<book>/progress.json` (atomically written back via `pipeline.py progress`). Detailed teaching principles / adaptive strategy / common pitfalls in the skill's `references/teaching_patterns.md`.
+
+## Acquisition pipeline (optional · user responsibility)
+
+> ⚠️ The book-source acquisition below (search / download / import_source / discover) is a **legacy optional capability**: this repo's main path is the `teach.py` / `all-local` above (processing the local files you provided). The crawler scripts make **no outward promise of web crawling / proxying**; if the user uses them, they must comply with platform norms and bear all responsibility (see `免责声明.md`). Only use URLs you are authorized for, or that the site explicitly allows crawling; not supported for any unauthorized site (including those explicitly forbidding such tools).
+
+```
+Step 1 Search    load_sources → multi-source concurrent searchBook → aggregate results (agent-readable)
+Step 2 Download  pick a result → getContent chapter by chapter → 参考/<book>/
+Step 3 Course-ify  参考/<book>/ → content cleanup + heading tree → 书库/<book>/ nested course (direct read, no 预处理/)
+```
+
+**Source pool tiers** (`data/sources/`):
+
+| Dir | Meaning |
+|---|---|
+| `active/` | pure-parse / JS-extract sources (pipeline default load, verified usable) |
+| `archive/` | full backup (incl. login / Java bridge / browser-needed sources, archived, not run) |
+| `discovered/` | new sources the agent derived by reading sample pages (discover.py output) |
+| `imported/` | sources `import_source.py` batch-imported and verified from subscription URLs (`verified.json`) |
+
+> Current `imported/verified.json` = **143 unique usable sources** (union across imports; survival pre-filter + per-source L1 verify + dead-cause classification).
+
+## Toolchain (`tools/`)
+
+| Module | Responsibility | Layer |
+|---|---|---|
+| `acquire/fetcher.py` | HTTP layer (desktop UA, gbk/gb18030 heuristic decode, 1 QPS per domain) | engine internal |
+| `acquire/rules.py` | source-rule evaluation (CSS/XPath/JSONPath/Regex, incl. `@js:` routing, `_self_matches`) | engine internal |
+| `acquire/js_bridge.py` | resident Node evaluating `@js:`/`{{java.*}}` (lazy start + process singleton, no browser) | engine internal |
+| `acquire/transforms.py` | response-level decrypt hooks (7 AES/DES configs + md5/HMac, no browser) | engine internal |
+| `acquire/source_engine.py` | four actions (search/info/toc/content) + resume crawling + fault-tolerant persist | engine internal |
+| `acquire/pipeline.py` | pipeline orchestration (search/download/ingest/all-local/all; course-ify via course_gen direct read of 参考/) | engine internal |
+| `acquire/import_source.py` | **external entry**: subscription URL → adaptive unpack + survival pre-filter + per-source verify + dead-cause classify | Skill call |
+| `acquire/discover.py` | bare URL → agent reads sample page to derive source rule → replay-verify → write `discovered/` | Skill call |
+| `structure/course_gen.py` | 参考/<book>/ direct read → heading tree → 书库/<book>/ nested course + TOC guide + progress.json | Skill call |
+
+**External command surface (Skill call)**: `import_source.py <url>`, `discover.py <url>`, `pipeline.py search/download/all-local/all <...>`, `course_gen.py 参考/<book>/ --book <book>`, `selftest.py` / `debug_source.py` / `rule_trace.py` (troubleshoot).
+
+## Environment
+
+- Python 3.13 (or 3.11+); Node 22 only needed when using the "online source JS bridge" (optional, auto-skipped if absent)
+- Only pure-parse dependencies (httpx/bs4 etc.), **no browser / no Playwright / no external LLM key**
+
+## License & disclaimer
+
+- **Code license**: this repo (parse / course-ify engine, skill, scripts) is released under **MIT**, see [`LICENSE`](./LICENSE).
+- **Book content**: the repo **contains no book text**; the user must supply local book files and bear copyright and compliance responsibility; details in [`免责声明.md`](./免责声明.md).
+- **Crawler scripts**: `search` / `download` / `import_source` / `discover` are optional legacy capabilities, used by the user at their own risk, not in the external main path.
+
+## Working discipline
+
+- Each step "change → test → git commit", precisely reversible on failure
+- The user supplies book/web sources; responsibility on the user (no copyright discipline set, to avoid the agent misreading and over-refusing)
+
+---
+
+# 中文版
+
 # 授业（Book Learning Tutor）：书籍课程化 · 逐课教学闭环
 
 > 2026-08-06 建立。把一本书变成「目录导读 + 章 + 课」的文件夹课程，由 **agent 自驱** 一课一课精准教学，token 零浪费。

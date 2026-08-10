@@ -1,36 +1,36 @@
-# T1 智能补强 · 来源选择与评估细则（按需读）
+# T1 Smart Enrichment · Source Selection & Evaluation spec (read on demand)
 
-授业课程可能"够用但不深"或"部分过时"。T1 在开课前扫描课程，按下面选择补强来源——这是平行选项，不是优先级。
+A Book Learning Tutor course may be "good enough but not deep" or "partly outdated". T1 scans the course before opening and picks enrichment sources by the guide below — these are parallel options, not a priority order.
 
-## 补强来源选择
+## Enrichment source selection
 
-| 场景 | 用哪个 | 作用 |
+| Scenario | Which to use | Effect |
 |------|--------|------|
-| 概念过时 / 需前沿 | arxiv（综述+经典+最新） | 拉综述看全貌、经典溯源、前沿补充 |
-| 编程/框架书 | project-code 分析（目标项目） | 从真实代码反推能力差距矩阵，学的每样都能在项目中看到 |
-| 需权威确认 | research / 官方文档 / 规范 | 确保关键概念经得起推敲 |
-| 主干太薄 | 通用教程/教材搜索 | 补例子、补视角 |
+| Concept outdated / needs frontier | arxiv (survey + classic + latest) | pull survey for the big picture, trace classics to the source, supplement the frontier |
+| Programming / framework book | project-code analysis (target project) | reverse-engineer the capability-gap matrix from real code; everything learned is visible in the project |
+| Needs authoritative confirmation | research / official docs / specs | ensure key concepts hold up |
+| Backbone too thin | general tutorial / textbook search | supplement examples, supplement perspectives |
 
-## 三维补强评估（重要性/难度/时间）
+## Three-dimensional enrichment evaluation (importance / difficulty / time)
 
-- **重要性**：⭐⭐⭐ 核心（不学后面看不懂）/ ⭐⭐ 重要（实用但可跳）/ ⭐ 补充（可选）。
-- **难度**：🟢 简单（直观有类比）/ 🟡 适中（需抽象但一次懂）/ 🔴 困难（抽象+多步，必拆）。
-- **时间**：基于 `storage/习惯.md` 的 `avg_time_per_concept` × 概念数估算。
+- **Importance**: ⭐⭐⭐ core (can't understand later without it) / ⭐⭐ important (practical but skippable) / ⭐ supplementary (optional).
+- **Difficulty**: 🟢 easy (intuitive, has analogy) / 🟡 moderate (needs abstraction but understood once) / 🔴 hard (abstract + multi-step, must split).
+- **Time**: estimated from `storage/习惯.md`'s `avg_time_per_concept` × number of concepts.
 
-对标记 🔴 困难或 mastery 历史低的课，在 T1 决定：拆几节、补多少例子、是否需 project-code 对照。
+For lessons marked 🔴 hard or with low mastery history, decide in T1: how many sub-sections to split, how many examples to add, whether project-code cross-reference is needed.
 
-## 时间规划（仅独立开课兜底用）
+## Time planning (fallback for standalone opening only)
 
-无授业课程、用户直接"帮我学 X"时，按每日投入给方案：
-- 方案A 每天30min → 约 X 天，掌握核心+基础应用
-- 方案B 每天1h → 约 X 天，掌握全部+能实战
-- 方案C 每天2h → 约 X 天，深入理解+能做项目
-总预估 = 各章预估时间之和；天数 = 总预估 ÷ 每天时间。
+When there is no course and the user directly says "help me learn X", give a plan by daily investment:
+- Plan A 30min/day → about X days, master core + basic application
+- Plan B 1h/day → about X days, master all + able to practice
+- Plan C 2h/day → about X days, deep understanding + able to do projects
+Total estimate = sum of per-chapter estimates; days = total estimate ÷ daily time.
 
-## 补强落点（安全：统一写单文件）
+## Enrichment landing (safe: unified single file)
 
-**只写 `书库/<书名>/_enrich.md`（一本书一个补强文件），绝不改动分课正文 `第XX章_*/第XX课_*.md`。**
+**Only write `书库/<book>/_enrich.md` (one enrichment file per book); never modify the lesson bodies `第XX章_*/第XX课_*.md`.**
 
-- 结构：`# <书名> 补强` 下按 `## <章>/<课>` 小节追加，每节含来源标注（arxiv / project-code / 官方文档）与提炼要点。
-- 理由：本技能对分课正文**无代码写护栏**，若让 agent 直接编辑 `<课>.md` 有改坏主课程的风险；单文件隔离把风险降到最低。
-- `progress.json` 不变；教学时本课补强随引用被读取，不嵌入分课正文。
+- Structure: under `# <book> 补强`, append by `## <chapter>/<lesson>` subsections, each with a source tag (arxiv / project-code / official docs) and distilled points.
+- Reason: this skill has **no code guardrail** on lesson bodies; letting the agent edit `<lesson>.md` directly risks breaking the main course. Single-file isolation minimizes that risk.
+- `progress.json` is unchanged; during teaching the lesson's enrichment is read by reference, not embedded in the lesson body.
