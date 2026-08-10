@@ -2,15 +2,17 @@
 
 Step 1 搜索： load_sources → 多源并发 searchBook → 聚合结果（模型可读）
 Step 2 下载： 选一条结果 → 逐章 getContent → 参考/<书名>/
-Step 3 转md： 参考/<书名>/ → 正文净化 → 预处理/<书名>.md
+Step 3 课程化： 参考/<书名>/ → course_gen 直读 → 书库/<书名>/（无需常驻 预处理/）
 格式层 ingest： 本地 PDF/EPUB/DJVU/TXT/MD → 参考/<书名>/NNNN_title.txt（补"只能翻txt"短板）
 
 CLI：
     python pipeline.py search  <书名> [--idx 15]      # Step1：搜书，打印+缓存结果
     python pipeline.py download <bookUrl> <源名> [书名] # Step2：下载原书到 参考/
     python pipeline.py ingest <文件或目录> [--name 书名] # 格式层：本地书 → 参考/
-    python pipeline.py convert <书名>                 # Step3：参考/ → 预处理/<书名>.md
-    python pipeline.py all <书名> [--idx 15]           # 串联：搜→下→md（M4 验证）
+    python pipeline.py all <书名> [--idx 15]           # 串联：搜→下→course_gen（参考/直读→书库/）
+    # 课程化（参考/ → 书库/）统一由 tools/structure/course_gen.py 完成，无需常驻 预处理/：
+    #     python tools/structure/course_gen.py 参考/<书名>/ --book <书名>
+    #     python pipeline.py all-local <文件> [--name 书名]   # 本地书一键课程化
 
 说明：默认只跑纯解析源（计划书已定）；java.*/webView 源在 search 阶段捕获异常跳过。
 """
@@ -23,7 +25,6 @@ import urllib.parse
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from bs4 import BeautifulSoup
 from source_engine import SourceEngine, load_sources, _safe, REF_DIR, write_robust
 from book_formats import extract as extract_book, unpack_cbz, extract_figures  # 格式层：文本三元组 + CBZ 漫画解包 + PDF 插图
 from notice import report_source_unavailable  # 在线获取失败 → 统一提示使用者自供源
@@ -34,9 +35,7 @@ ACTIVE_DIR = SOURCES_DIR / "active"   # 活跃书源池（已去除登录/Java�
 DISCOVERED_DIR = SOURCES_DIR / "discovered"  # 自动发现模块生成的源（discover.py 写入）
 IMPORTED_DIR = SOURCES_DIR / "imported"  # import_source.py 校验通过的外部订阅源
 SEARCH_CACHE = ROOT / "data" / "search"
-PREP_DIR = ROOT / "预处理"
 SEARCH_CACHE.mkdir(parents=True, exist_ok=True)
-PREP_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _all_sources():
@@ -94,80 +93,15 @@ def download(source_name, book_url, book_name=None, max_chapters=None):
     return eng.download_book(book_url, book_name, max_chapters)
 
 
-def convert(book_name):
-    """Step3：参考/<书名>/*.txt → 预处理/<书名>.md（正确章/节层级）。
-
-    读 _sections.json 分组；无清单时退化为「每 txt=一章」（兼容下载/旧目录）。
-    输出：书名/作者作普通文本头（不被 course_gen 当成章），每「章」一个
-    '# 章名'，章内每「节」一个 '## 节名'；小说章无节则正文直接挂在 '# 章' 下
-    （→ course_gen 每章一课，不嵌套）。
-    """
-    src_dir = REF_DIR / _safe(book_name)
-    if not src_dir.exists():
-        raise SystemExit(f"未找到原书目录：{src_dir}")
-    meta_p = src_dir / "_meta.json"
-    meta = json.loads(meta_p.read_text(encoding="utf-8")) if meta_p.exists() else {}
-
-    man_p = src_dir / "_sections.json"
-    if man_p.exists():
-        manifest = json.loads(man_p.read_text(encoding="utf-8"))
-    else:
-        # 兼容下载/旧目录：每个 NNNN_*.txt = 一章（小说源每章一文件），section=None
-        files = sorted(src_dir.glob("[0-9][0-9][0-9][0-9]_*.txt"))
-        manifest = [{"chapter": fp.name[5:-4], "section": None,
-                     "title": fp.name[5:-4], "file": fp.name} for fp in files]
-
-    # 按章分组（保持首次出现顺序）
-    order = []
-    groups = {}
-    for e in manifest:
-        ch = e.get("chapter") or e.get("title") or "正文"
-        if ch not in groups:
-            groups[ch] = []
-            order.append(ch)
-        groups[ch].append(e)
-
-    parts = []
-    for ch in order:
-        parts.append(f"# {_strip_num_prefix(ch)}\n")  # 章：一级标题
-        for e in groups[ch]:
-            body = ""
-            fpath = src_dir / e["file"]
-            if fpath.exists():
-                body = _sanitize_body(html_to_text(fpath.read_text(encoding="utf-8")))
-            if e.get("section"):
-                parts.append(f"## {_strip_num_prefix(e['section'])}\n\n{body}\n")  # 节：二级
-            else:
-                parts.append(f"{body}\n")  # 小说章：正文直接挂章下（→每章一课）
-    header = (f"{meta.get('name','')}\n\n"
-              f"> 作者：{meta.get('author','')} ｜ 来源：{meta.get('source','')} ｜ "
-              f"章节数：{meta.get('chapterCount','')} ｜ 类型：{meta.get('bookType','')}\n\n")
-    md = header + "\n".join(parts)
-    out = PREP_DIR / f"{_safe(book_name)}.md"
-    if not write_robust(out, md, label="预处理"):
-        print(f"[warn] 预处理文件写入被拦截：{out.name}（前次产物仍在，未覆盖）")
-    return str(out), len(manifest)
-
-
-def _strip_num_prefix(title):
-    """去掉标题首部『第N章/节/课』编号词（避免与 course_gen 自动加的 第XX章 重复）。"""
-    return re.sub(r"^第[0-9零一二三四五六七八九十百千]+\s*[章章节节节课部分段篇]\s*",
-                  "", (title or "")).strip()
-
-
-def _sanitize_body(text):
-    """正文内若以 '#' 起头（如 Python 代码清单注释 '# File: chaos.py'、被 pymupdf
-    抽进正文的页眉），会被下游 course_gen 误判为 markdown 标题→垃圾章。转义行首 '#'
-    为 '\\#'（渲染为字面 '#'，不触发标题），既保真又消除垃圾章。"""
-    if not text:
-        return ""
-    return re.sub(r"(?m)^#", r"\\#", text)
+# 注：原 convert（参考/ → 预处理/.md）已整体迁入 tools/structure/course_gen.py
+# 的 generate_from_ref；pipeline 直接调 course_gen 吃 参考/ 目录，废掉常驻 预处理/。
+# 对应的 _strip_num_prefix / _sanitize_body / html_to_text 也随迁至 course_gen.py。
 
 
 # 目录模式下只认这些"真书"格式，避免把项目里的 .md/.txt/venv 误吸进 参考/
 _BOOK_EXTS = {".pdf", ".epub", ".djvu", ".mobi", ".azw", ".azw3", ".docx", ".fb2", ".cbz"}
 # 目录递归时跳过的噪声目录（含 venv / 仓库元数据 / 产物目录）
-_SKIP_DIRS = {"venv", ".venv", ".git", "node_modules", "data", "参考", "预处理",
+_SKIP_DIRS = {"venv", ".venv", ".git", "node_modules", "data", "参考",
               "书库", ".workbuddy", "__pycache__"}
 
 
@@ -177,7 +111,7 @@ def ingest(path, book_name=None, cbz_chunks=None):
     path 为文件：整本作为一本书（书名=--name 或文件名）。
     path 为目录：目录下（含子目录，跳过 venv/.git/产物等噪声目录）每个
                  pdf/epub/djvu/mobi/azw/azw3/docx/fb2/cbz 各作为一本书（书名=文件名）。
-    抽出的章节直接落 参考/<书名>/，下游 convert → course_gen 零改动消费。
+    抽出的章节直接落 参考/<书名>/，下游 course_gen 直接消费（无需 预处理/ 中间层）。
     cbz_chunks：仅对扁平整包 CBZ 生效——把无分目录的整包按图片序切成 N 话
                 （用于人为恢复章结构）；CBZ 已含多顶层子目录时忽略（子目录即分章）。
     """
@@ -238,10 +172,10 @@ def ingest(path, book_name=None, cbz_chunks=None):
             write_robust(fn, sec["text"], label="参考")
             manifest.append({"chapter": sec["chapter"], "section": sec["section"],
                              "title": sec["title"], "file": fn.name})
-        # 章/节分组清单：convert 据此输出 # 章 / ## 节 的正确 md（修嵌套 bug）
+        # 章/节分组清单：course_gen 据此输出 # 章 / ## 节 的正确 md（修嵌套 bug）
         write_robust(out_dir / "_sections.json",
                      json.dumps(manifest, ensure_ascii=False, indent=2), label="参考")
-        # 顺手写 _meta.json，convert 会读 name/author/source/bookType
+        # 顺手写 _meta.json，course_gen 会读 name/author/source/bookType
         meta = dict(r.get("meta", {}))
         meta.update({"name": name, "chapterCount": len(r["sections"]),
                      "format": r["fmt"], "needsOcr": r["needs_ocr"],
@@ -251,7 +185,7 @@ def ingest(path, book_name=None, cbz_chunks=None):
         print(f"[ingest] {f.name} → 参考/{_safe(name)}/ （{len(r['sections'])} 节，"
               f"{r['fmt']}，{r.get('book_type','unknown')}）{flag}")
         total_sec += len(r["sections"])
-    print(f"[ingest] 完成，共 {total_sec} 节。下一步：python pipeline.py convert {book_name or '<书名>'}")
+    print(f"[ingest] 完成，共 {total_sec} 节。下一步：python tools/structure/course_gen.py 参考/{_safe(book_name or '<书名>')} --book {book_name or '<书名>'}")
 
 
 
@@ -308,7 +242,7 @@ def figures_to_book(path, book_name=None):
 
     每有插图的 (章,节) 建一个目录：fig_NNN.ext + meta.json{chapter,section,title,
     captions,context(该节正文前 800 字)}；书库/<书名>/_figures/_index.jsonl 汇总每行一个
-    (image,caption,chapter,section,context) 训练对齐单元。需先 ingest→convert→course_gen
+    (image,caption,chapter,section,context) 训练对齐单元。需先 ingest→course_gen
     生成 书库/<书名>/（否则报错指引）。
 
     幂等：每次重跑先清空旧 _figures/ 再重新生成，避免残留 stale 图文件被 inline 误用。
@@ -318,7 +252,7 @@ def figures_to_book(path, book_name=None):
     name = book_name or p.stem
     book_dir = ROOT / "书库" / _safe(name)
     if not book_dir.exists():
-        raise SystemExit(f"未找到 书库/{_safe(name)}/，请先跑完 ingest→convert→course_gen")
+        raise SystemExit(f"未找到 书库/{_safe(name)}/，请先跑完 ingest→course_gen")
     # 重新生成 _figures：先清空旧目录，避免残留 stale 图文件被 inline 误用（幂等重跑）。
     fig_root = book_dir / "_figures"
     if fig_root.exists():
@@ -708,23 +642,10 @@ def _selftest_figures_collision():
         _rmtree_force(book_dir)
 
 
-def html_to_text(html):
-    """极简 HTML→纯文本（保留段落）。v1 够用；后续可换 html2text。"""
-    if not html or "<" not in html:
-        return (html or "").strip()
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style"]):
-        tag.decompose()
-    text = soup.get_text("\n")
-    lines = [ln.strip() for ln in text.splitlines()]
-    text = "\n".join(ln for ln in lines if ln)
-    return re.sub(r"\n{3,}", "\n\n", text)
-
-
 def all_local(path, book_name=None):
-    """本地书一键课程化：ingest → convert → course_gen（不联网、不爬取）。
+    """本地书一键课程化：ingest → course_gen（不联网、不爬取）。
 
-    仅接受单个书文件；目录请直接用 ingest 后逐本 convert。
+    仅接受单个书文件；目录请直接用 ingest 后逐本 course_gen。
     path：本地书文件路径（pdf/epub/djvu/mobi/azw/azw3/docx/fb2/cbz/txt/md）。
     book_name：可选显式书名；缺省用文件名 stem。
     产物：书库/<书名>/ 课程（含 progress.json）。
@@ -734,7 +655,7 @@ def all_local(path, book_name=None):
     if not p.exists():
         raise SystemExit(f"路径不存在：{path}")
     if p.is_dir():
-        raise SystemExit("[all-local] 仅支持单个书文件；目录请用 ingest 后逐本 convert。")
+        raise SystemExit("[all-local] 仅支持单个书文件；目录请用 ingest 后逐本 course_gen。")
     name = book_name or p.stem
     fmt = detect_format_local(p)
     if fmt == "cbz":  # 漫画：解包后直接进入漫画课程化
@@ -747,9 +668,9 @@ def all_local(path, book_name=None):
         print(f"[all-local] 完成（漫画）→ 书库/{_safe(name)}/")
         return
     ingest(str(p), name)                       # → 参考/<书名>/
-    out_md, _ = convert(name)                  # → 预处理/<书名>.md
+    ref_dir = REF_DIR / _safe(name)
     cg = Path(__file__).resolve().parent.parent / "structure" / "course_gen.py"
-    r = subprocess.run([sys.executable, str(cg), out_md, "--book", name], cwd=str(ROOT))
+    r = subprocess.run([sys.executable, str(cg), str(ref_dir), "--book", name], cwd=str(ROOT))
     if r.returncode != 0:
         raise SystemExit(f"[all-local] 课程生成失败（exit={r.returncode}）")
     print(f"[all-local] 完成 → 书库/{_safe(name)}/（可开始逐课教学）")
@@ -913,7 +834,6 @@ def main():
     sub = ap.add_subparsers(dest="cmd")
     ps = sub.add_parser("search"); ps.add_argument("kw"); ps.add_argument("--idx", type=int, nargs="*")
     pd = sub.add_parser("download"); pd.add_argument("url"); pd.add_argument("source"); pd.add_argument("name", nargs="?"); pd.add_argument("--max", type=int, default=None)
-    pc = sub.add_parser("convert"); pc.add_argument("name")
     pi = sub.add_parser("ingest"); pi.add_argument("path"); pi.add_argument("--name", default=None)
     pi.add_argument("--chunks", type=int, default=None, help="扁平整包 CBZ 按图片序切成 N 话（仅漫画、且整包无分目录时生效）")
     pf = sub.add_parser("figures"); pf.add_argument("path"); pf.add_argument("--name", default=None)
@@ -953,9 +873,6 @@ def main():
             report_source_unavailable(f"下载失败：{e}", ctx=f"download {args.source}")
             raise SystemExit(1)
         print(f"[下载] {info['name']} → {info['dir']}（{info['chapters']} 章）")
-    elif args.cmd == "convert":
-        out, n = convert(args.name)
-        print(f"[转md] {out}（{n} 节）")
     elif args.cmd == "ingest":
         ingest(args.path, args.name, cbz_chunks=args.chunks)
     elif args.cmd == "figures":
@@ -977,8 +894,12 @@ def main():
             b = ok[0]
             print(f"[all] 选用：{b.get('name')} / {b.get('_source')} / {b.get('bookUrl')}")
             info = download(b.get("_source"), b["bookUrl"], b.get("name"), args.max)
-            out, n = convert(info["name"])
-            print(f"[all] 完成 → {out}（{n} 节）")
+            ref_dir = REF_DIR / _safe(info["name"])
+            cg = Path(__file__).resolve().parent.parent / "structure" / "course_gen.py"
+            r = subprocess.run([sys.executable, str(cg), str(ref_dir), "--book", info["name"]], cwd=str(ROOT))
+            if r.returncode != 0:
+                raise RuntimeError(f"课程生成失败（exit={r.returncode}）")
+            print(f"[all] 完成 → 书库/{_safe(info['name'])}/")
         except Exception as e:
             report_source_unavailable(f"获取失败：{e}", ctx=f"all {args.kw}")
             raise SystemExit(1)

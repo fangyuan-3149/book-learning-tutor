@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""嵌套回归测试（v4 修复防回归）：ingest → convert → course_gen 端到端。
+"""嵌套回归测试（v4 修复防回归）：ingest → course_gen 端到端（参考/直读，已废 预处理/ 中间层）。
 
 锁住两个核心不变量，避免将来动 pipeline/course_gen 时悄悄回归：
   1) 小说（章为最小单位，无子节）：每「章」独立成文件夹、各含 1 课，
@@ -31,8 +31,8 @@ def _pipeline(cmd, *a):
     _run(["tools/acquire/pipeline.py", cmd, *a])
 
 
-def _course_gen(md_name, book):
-    _run(["tools/structure/course_gen.py", f"预处理/{md_name}", "--book", book])
+def _course_gen(book):
+    _run(["tools/structure/course_gen.py", f"参考/{book}", "--book", book])
 
 
 def test_novel_nesting():
@@ -53,8 +53,7 @@ def test_novel_nesting():
             encoding="utf-8",
         )
         _pipeline("ingest", str(src), "--name", "nest_novel")
-        _pipeline("convert", "nest_novel")
-        _course_gen("nest_novel.md", "nest_novel")
+        _course_gen("nest_novel")
 
         bd = ROOT / "书库" / "nest_novel"
         chapters = [p.name for p in sorted(bd.iterdir()) if p.is_dir()]
@@ -75,7 +74,6 @@ def test_novel_nesting():
         import shutil
         for base in ("参考", "书库"):
             shutil.rmtree(ROOT / base / "nest_novel", ignore_errors=True)
-        (ROOT / "预处理" / "nest_novel.md").unlink(missing_ok=True)
         shutil.rmtree(d, ignore_errors=True)
 
 
@@ -97,8 +95,7 @@ def test_textbook_nesting():
             encoding="utf-8",
         )
         _pipeline("ingest", str(src), "--name", "nest_textbook")
-        _pipeline("convert", "nest_textbook")
-        _course_gen("nest_textbook.md", "nest_textbook")
+        _course_gen("nest_textbook")
 
         bd = ROOT / "书库" / "nest_textbook"
         chapters = [p.name for p in sorted(bd.iterdir()) if p.is_dir()]
@@ -114,7 +111,6 @@ def test_textbook_nesting():
         import shutil
         for base in ("参考", "书库"):
             shutil.rmtree(ROOT / base / "nest_textbook", ignore_errors=True)
-        (ROOT / "预处理" / "nest_textbook.md").unlink(missing_ok=True)
         shutil.rmtree(d, ignore_errors=True)
 
 

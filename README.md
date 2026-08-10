@@ -34,9 +34,8 @@ python teach.py "<本地书路径>/你的书.pdf"
 ## 你要做什么（AI 角色）
 
 1. **准备原书**：使用者自行提供本地书文件（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ）；本技能抽取章节 → 参考/<书名>/
-2. **转预处理**：参考/<书名>/*.txt → 净化 → 预处理/<书名>.md
-3. **课程化**：markdown 标题树 → 章/课文件夹 + 目录导读（`tools/structure/course_gen.py` → `书库/<书名>/`）
-4. **逐课教学闭环**：agent 自驱（讲解 → 问疑 → 解疑 → 出题 → 看掌握 → 推进），进度记 `progress.json`
+2. **课程化**：`tools/structure/course_gen.py` 直接消费 参考/<书名>/ → 章/课文件夹 + 目录导读 → `书库/<书名>/`（无需中间 预处理/）
+3. **逐课教学闭环**：agent 自驱（讲解 → 问疑 → 解疑 → 出题 → 看掌握 → 推进），进度记 `progress.json`
 
 ## 架构铁律（用户定稿，必须守住）
 
@@ -83,8 +82,7 @@ T4 改进·自进化       （LA 的 skill_manage 逻辑保留，执行层受 Wo
 ```
 Step 1 搜索   load_sources → 多源并发 searchBook → 聚合结果（agent 可读）
 Step 2 下载   选一条结果 → 逐章 getContent → 参考/<书名>/
-Step 3 转 md  参考/<书名>/ → 正文净化 → 预处理/<书名>.md
-（课程化）    预处理/<书名>.md → 标题树 → 书库/<书名>/ 嵌套课程
+Step 3 课程化  参考/<书名>/ → 正文净化 + 标题树 → 书库/<书名>/ 嵌套课程（直读，无 预处理/）
 ```
 
 **书源池分层**（`data/sources/`）：
@@ -107,12 +105,12 @@ Step 3 转 md  参考/<书名>/ → 正文净化 → 预处理/<书名>.md
 | `acquire/js_bridge.py` | 常驻 Node 求值 `@js:`/`{{java.*}}`（懒启动 + 进程单例，无浏览器） | 引擎内部 |
 | `acquire/transforms.py` | 响应级解密钩子（7 种 AES/DES 配置 + md5/HMac 等，无浏览器） | 引擎内部 |
 | `acquire/source_engine.py` | 四大动作（search/info/toc/content）+ 断点续爬 + 容错落盘 | 引擎内部 |
-| `acquire/pipeline.py` | 三步管道编排（search/download/convert/all） | 引擎内部 |
+| `acquire/pipeline.py` | 管道编排（search/download/ingest/all-local/all；课程化由 course_gen 直读 参考/） | 引擎内部 |
 | `acquire/import_source.py` | **外化入口**：输入订阅 URL → 自适应拆包 + 存活预筛 + 逐源校验 + 死因分类 | Skill 调用 |
 | `acquire/discover.py` | 裸网址 → agent 读样本页推导书源规则 → 回放校验 → 落 `discovered/` | Skill 调用 |
-| `structure/course_gen.py` | 预处理/*.md → 标题树 → 书库/<书名>/ 嵌套课程 + 目录导读 + progress.json | Skill 调用 |
+| `structure/course_gen.py` | 参考/<书名>/ 直读 → 标题树 → 书库/<书名>/ 嵌套课程 + 目录导读 + progress.json | Skill 调用 |
 
-**对外命令面（Skill 调用）**：`import_source.py <url>`、`discover.py <url>`、`pipeline.py search/download/convert/all <...>`、`course_gen.py <书名>`、`selftest.py` / `debug_source.py` / `rule_trace.py`（排错）。
+**对外命令面（Skill 调用）**：`import_source.py <url>`、`discover.py <url>`、`pipeline.py search/download/all-local/all <...>`、`course_gen.py 参考/<书名>/ --book <书名>`、`selftest.py` / `debug_source.py` / `rule_trace.py`（排错）。
 
 ## 环境
 

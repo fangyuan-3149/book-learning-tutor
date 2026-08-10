@@ -3,7 +3,7 @@
 """
 course_gen.py —— 授业 管道四阶段·阶段③ 结构生成器
 
-把一本书的 markdown（预处理/<书名>.md，来自获取管道 Step3）按标题层级
+把一本书（参考/<书名>/ 抽取目录 或 预处理 markdown）按标题层级
 切成「章 / 课」，生成可逐课精学的课程文件夹：
 
     书库/<书名>/
@@ -16,12 +16,13 @@ course_gen.py —— 授业 管道四阶段·阶段③ 结构生成器
 
 设计铁律（见 计划书 / 工作记忆）：
 - 生成器只「搬运原文」，精华提炼交给教学闭环（agent 自驱），故每课 .md = 原文保真。
-- 零新依赖（仅标准库）；可 fixture 自测，不依赖外部站。
+- 依赖标准库；HTML 正文净化时惰性使用 bs4（与管道一致）；可 fixture 自测，不依赖外部站。
 - 标题→章/课 映射可配置；无合适层级时自动降级（H2→章 / H3→课 / 全文单课）。
 
 用法：
-    python course_gen.py 预处理/天降.md
-    python course_gen.py 预处理/天降.md --book 天降 --out 书库
+    python course_gen.py 参考/天降/            # 直接吃抽取目录（推荐，无需中间预处理文件）
+    python course_gen.py 预处理/天降.md        # 兼容：手动/测试喂 markdown
+    python course_gen.py 参考/天降/ --book 天降 --out 书库
     python course_gen.py --selftest
 """
 from __future__ import annotations
@@ -37,6 +38,43 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 HEADING_RE = re.compile(r'^(#{1,6})\s+(.*?)\s*#*\s*$')
 ILLEGAL_RE = re.compile(r'[\\/:*?"<>|\r\n\t]+')
+
+
+# ---------------------------------------------------------------------------
+# 参考/ → markdown 转换辅助（原 pipeline.convert 的逻辑整体迁入，使 course_gen
+# 能直接消费 参考/<书名>/ 抽取目录，废掉常驻的 预处理/ 中间层）
+# ---------------------------------------------------------------------------
+def _strip_num_prefix(title):
+    """去掉标题首部『第N章/节/课』编号词（避免与自动加的 第XX章 重复）。"""
+    return re.sub(r"^第[0-9零一二三四五六七八九十百千]+\s*[章章节节节课部分段篇]\s*",
+                  "", (title or "")).strip()
+
+
+def _sanitize_body(text):
+    """正文内若以 '#' 起头（如 Python 代码清单注释、被抽进正文的页眉），会被误判为
+    markdown 标题→垃圾章。转义行首 '#' 为 '\\#'（渲染为字面 '#'，不触发标题），
+    既保真又消除垃圾章。"""
+    if not text:
+        return ""
+    return re.sub(r"(?m)^#", r"\\#", text)
+
+
+def html_to_text(html):
+    """极简 HTML→纯文本（保留段落）。无 '<' 时原样返回（纯文本抽取零开销）；
+    含 HTML 时惰性使用 bs4（与管道一致），无 bs4 退化为去标签正则。"""
+    if not html or "<" not in html:
+        return (html or "").strip()
+    try:
+        from bs4 import BeautifulSoup
+    except ImportError:
+        return re.sub(r"<[^>]+>", "", html)
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+    text = soup.get_text("\n")
+    lines = [ln.strip() for ln in text.splitlines()]
+    text = "\n".join(ln for ln in lines if ln)
+    return re.sub(r"\n{3,}", "\n\n", text)
 
 PROGRESS_VERSION = 1
 
@@ -192,13 +230,23 @@ def generate(input_md: str | Path,
              chapter_level: int = 1,
              lesson_level: int = 2,
              dry_run: bool = False) -> dict:
-    """执行结构生成。返回汇总 dict（章节数、课数、输出目录）。"""
+    """执行结构生成（输入为 markdown 文件，兼容手动/测试喂 .md）。返回汇总 dict。"""
     src = Path(input_md)
     if not src.exists():
-        raise FileNotFoundError(f'找不到预处理 markdown：{src}')
+        raise FileNotFoundError(f'找不到 markdown：{src}')
     text = src.read_text(encoding='utf-8')
     if book_name is None:
         book_name = src.stem
+    return _generate_from_text(text, book_name, out_root, chapter_level, lesson_level, dry_run)
+
+
+def _generate_from_text(text: str,
+                        book_name: str,
+                        out_root: str | Path = '书库',
+                        chapter_level: int = 1,
+                        lesson_level: int = 2,
+                        dry_run: bool = False) -> dict:
+    """结构生成核心：给定全文 markdown 文本，切成章/课并落盘。返回汇总 dict。"""
     book = sanitize(book_name)
 
     root = _build_tree(text)
@@ -313,6 +361,67 @@ def generate(input_md: str | Path,
         'first_lesson': lesson_entries[0]['rel'] if lesson_entries else None,
         'dry_run': False,
     }
+
+
+# ---------------------------------------------------------------------------
+# 参考/ 直读：抽取目录 → 书库/<书名>/（替代常驻的 预处理/ 中间层）
+# ---------------------------------------------------------------------------
+def generate_from_ref(ref_dir: str | Path,
+                      book_name: str | None = None,
+                      out_root: str | Path = '书库',
+                      chapter_level: int = 1,
+                      lesson_level: int = 2,
+                      dry_run: bool = False) -> dict:
+    """直接消费 参考/<书名>/ 抽取目录（_sections.json + NNNN_*.txt + _meta.json），
+    组装成与 convert 等价的 markdown，再走 _generate_from_text。无需落盘 预处理/。
+
+    章/节层级与净化（html_to_text + _sanitize_body）与原 pipeline.convert 完全一致，
+    故产出课程与原先逐字节等价，嵌套不变量不变。
+    """
+    src_dir = Path(ref_dir)
+    if not src_dir.exists():
+        raise FileNotFoundError(f'找不到原书目录（参考/）：{src_dir}')
+    meta_p = src_dir / "_meta.json"
+    meta = json.loads(meta_p.read_text(encoding="utf-8")) if meta_p.exists() else {}
+
+    man_p = src_dir / "_sections.json"
+    if man_p.exists():
+        manifest = json.loads(man_p.read_text(encoding="utf-8"))
+    else:
+        # 兼容下载/旧目录：每个 NNNN_*.txt = 一章（小说源每章一文件），section=None
+        files = sorted(src_dir.glob("[0-9][0-9][0-9][0-9]_*.txt"))
+        manifest = [{"chapter": fp.name[5:-4], "section": None,
+                     "title": fp.name[5:-4], "file": fp.name} for fp in files]
+
+    # 按章分组（保持首次出现顺序）
+    order = []
+    groups = {}
+    for e in manifest:
+        ch = e.get("chapter") or e.get("title") or "正文"
+        if ch not in groups:
+            groups[ch] = []
+            order.append(ch)
+        groups[ch].append(e)
+
+    parts = []
+    for ch in order:
+        parts.append(f"# {_strip_num_prefix(ch)}\n")  # 章：一级标题
+        for e in groups[ch]:
+            body = ""
+            fpath = src_dir / e["file"]
+            if fpath.exists():
+                body = _sanitize_body(html_to_text(fpath.read_text(encoding="utf-8")))
+            if e.get("section"):
+                parts.append(f"## {_strip_num_prefix(e['section'])}\n\n{body}\n")  # 节：二级
+            else:
+                parts.append(f"{body}\n")  # 小说章：正文直接挂章下（→每章一课）
+    header = (f"{meta.get('name','')}\n\n"
+              f"> 作者：{meta.get('author','')} ｜ 来源：{meta.get('source','')} ｜ "
+              f"章节数：{meta.get('chapterCount','')} ｜ 类型：{meta.get('bookType','')}\n\n")
+    md = header + "\n".join(parts)
+    if book_name is None:
+        book_name = src_dir.name
+    return _generate_from_text(md, book_name, out_root, chapter_level, lesson_level, dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -517,7 +626,7 @@ def selftest(verbose: bool = True) -> bool:
 # ---------------------------------------------------------------------------
 def main(argv=None):
     p = argparse.ArgumentParser(description='授业 结构生成器：markdown → 书库/<书名>/ 嵌套课程')
-    p.add_argument('input', nargs='?', help='预处理/<书名>.md 路径')
+    p.add_argument('input', nargs='?', help='参考/<书名>/ 目录 或 预处理/<书名>.md 文件')
     p.add_argument('--book', help='书名（默认取文件名 stem）')
     p.add_argument('--out', default='书库', help='输出根目录（默认 书库）')
     p.add_argument('--chapter-level', type=int, default=1, help='章标题层级（默认 1=#）')
@@ -540,8 +649,18 @@ def main(argv=None):
         print(f"✅ 漫画生成完成：{res['chapters']} 章 / {res['lessons']} 课（每话=一课）")
         print(f"   目录：{res['book_dir']}")
         return 0
+    # 文本原书目录（参考/<书名>/，含 _sections.json 或 NNNN_*.txt）：直接消费，无需 预处理/
     if inp.is_dir():
-        p.error(f'输入目录 {inp} 非漫画原书布局（需含 NNNN_话名/pages/）')
+        if (inp / "_sections.json").exists() or list(inp.glob("[0-9][0-9][0-9][0-9]_*.txt")):
+            res = generate_from_ref(inp, book_name=args.book, out_root=args.out,
+                                    dry_run=args.dry_run)
+            print(f"✅ 生成完成（参考/直读）：{res['chapters']} 章 / {res['lessons']} 课")
+            print(f"   目录：{res['book_dir']}")
+            if res.get('first_lesson'):
+                print(f"   首课：{res['first_lesson']}")
+            return 0
+        p.error(f'输入目录 {inp} 既不是漫画原书布局（含 NNNN_话名/pages/）'
+                f'也不是文本原书布局（含 _sections.json / NNNN_*.txt）')
 
     res = generate(args.input, book_name=args.book, out_root=args.out,
                    chapter_level=args.chapter_level, lesson_level=args.lesson_level,

@@ -6,6 +6,7 @@
 """
 import sys
 import json
+import subprocess
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -13,7 +14,7 @@ ROOT = HERE.parent.parent
 sys.path.insert(0, str(HERE))
 
 from source_engine import SourceEngine, load_sources
-from pipeline import REF_DIR, PREP_DIR, convert
+from pipeline import REF_DIR
 from fetcher import Fetcher
 
 FIX = ROOT / "tests" / "fixtures"
@@ -150,12 +151,19 @@ def main():
     assert len(chapters) == 2, chapters
     print(f"[Step2] 下载 OK：参考/测试书/ 共 {len(chapters)} 章")
 
-    # Step 3 转 markdown → 预处理/
-    out, n = convert("测试书")
-    md = Path(out).read_text(encoding="utf-8")
-    assert "第一章" in md and "第二章" in md, md[:200]
-    assert "（本章完）" not in md, "净化失败：残留（本章完）"
-    print(f"[Step3] 转md OK：预处理/测试书.md（{n} 节，已净化）")
+    # Step 3 课程化 → 书库/（直接吃 参考/，无需常驻 预处理/）
+    cg = ROOT / "tools" / "structure" / "course_gen.py"
+    r = subprocess.run([sys.executable, str(cg), str(REF_DIR / "测试书"),
+                         "--book", "测试书"], cwd=str(ROOT))
+    assert r.returncode == 0, "course_gen 课程化失败"
+    book_dir = ROOT / "书库" / "测试书"
+    assert book_dir.exists(), "未生成 书库/测试书/"
+    # 汇总全部课内容，验证章标题齐全、无净化残留（（本章完）已在 download 阶段清掉）
+    joined = "\n".join(p.read_text(encoding="utf-8")
+                        for p in book_dir.rglob("*.md"))
+    assert "第一章" in joined and "第二章" in joined, "缺章标题"
+    assert "（本章完）" not in joined, "净化失败：残留（本章完）"
+    print(f"[Step3] 课程化 OK：书库/测试书/（已净化，无本章完）")
 
     check_jsonpath()
     check_post_source()

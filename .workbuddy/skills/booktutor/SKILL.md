@@ -57,11 +57,8 @@ python tools/acquire/pipeline.py all-local "<本地书路径>/Flatland.epub"
 # ① 本地书 → 参考/<书名>/（抽取章节）
 python tools/acquire/pipeline.py ingest <文件或目录> [--name 书名]
 
-# ② 参考/<书名>/ → 预处理/<书名>.md（净化、定章/节层级）
-python tools/acquire/pipeline.py convert <书名>
-
-# ③ 预处理/<书名>.md → 书库/<书名>/（生成课程 + progress.json）
-python tools/structure/course_gen.py 预处理/<书名>.md --book <书名>
+# ② 参考/<书名>/ → 书库/<书名>/（course_gen 直读，生成课程 + progress.json）
+python tools/structure/course_gen.py 参考/<书名>/ --book <书名>
 ```
 
 - **扫描版判定**：仅 PDF/DJVU 文本层过薄时标 `needs_ocr` 并尝试本地 OCR 钩子；无 OCR 环境则保留标记、不强制。
@@ -81,8 +78,7 @@ python tools/structure/course_gen.py --selftest
 
 | 目录 | 内容 |
 |---|---|
-| `参考/<书名>/` | 原书抽取结果（`_sections.json` / `_meta.json`，供对照） |
-| `预处理/<书名>.md` | 净化后的全书 markdown |
+| `参考/<书名>/` | 原书抽取结果（`_sections.json` / `_meta.json`，既是检查点也是 course_gen 直读输入） |
 | `书库/<书名>/` | **终态课程**：`00_目录导读.md` + `第XX章_章名/第XX课_课名.md` + `progress.json` |
 
 ---

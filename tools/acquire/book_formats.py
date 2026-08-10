@@ -5,7 +5,7 @@ book_formats.py — 多格式书籍 → 纯文本「章/节」层级（授业格
 
 把 PDF / EPUB / MOBI / AZW / AZW3 / DJVU / DOCX / TXT / MD / FB2 抽成
 「章 → 节」两层结构的章节，写入 参考/<书名>/NNNN_title.txt（每节一个文件）
-+ 参考/<书名>/_sections.json（章/节分组清单），供 convert → course_gen 消费。
++ 参考/<书名>/_sections.json（章/节分组清单），供 course_gen 直接消费（参考/直读，无需中间 预处理/）。
 CBZ（漫画）不在此文本路径内——它走 ingest 解包到 参考/<书名>/NNNN_话名/pages/
 + transcript.md，再交给 course_gen 的漫画课程化（generate_comic）。
 
@@ -21,10 +21,10 @@ v4（"小说章没区分 / 嵌套错误"修复）核心变化：
   - 扫描版仍标 needs_ocr；新增可插拔 OCR 钩子（ocr.py）：有 tesseract / MinerU /
     Nougat 后端时自动识别，否则保留标记 + 清晰提示（不捆绑重型模型）。
 
-下游契约（convert 消费）：
+下游契约（course_gen 直读消费）：
   - 参考/<书名>/NNNN_title.txt：每「节」一个文件（小说每章一个）。
   - 参考/<书名>/_sections.json：[{"chapter","section","title","file"}, ...] 顺序清单；
-    缺该清单时 convert 退化为「每 txt=一章」（兼容下载/旧目录）。
+    缺该清单时 course_gen 退化为「每 txt=一章」（兼容下载/旧目录）。
 
 依赖（按需懒加载，缺哪个报哪个，不强制全装）：
   - pymupdf (fitz)   ：PDF / EPUB / DJVU / 图片 文本层抽取（首选，已装）
@@ -107,7 +107,7 @@ def _safe_title(title, limit=40):
 
 
 def _strip_num_prefix(title):
-    """去掉标题首部『第N章/节/课』编号词（convert 输出 md 用，避免与 course_gen
+    """去掉标题首部『第N章/节/课』编号词（course_gen 输出章节用，避免与 course_gen
     自动加的 第XX章 前缀重复）。"""
     return re.sub(r"^第[0-9零一二三四五六七八九十百千]+\s*[章章节节节课部分段篇]\s*",
                   "", (title or "")).strip()
