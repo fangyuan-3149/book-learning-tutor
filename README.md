@@ -11,6 +11,15 @@
 **The problem:** you buy books, highlight them, and forget them. Reading isn't learning.
 **This skill:** course-ifies a book into bite-sized lessons and walks you through it like a strict-but-kind teacher — it checks your understanding *before* letting you move on, makes you recite the key points, and brings them back for review on a schedule. Progress is saved, so you can close the chat and resume exactly where you left off.
 
+**What it does:**
+- 📚 **Course-ifies any book** (PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ) into a structured lesson tree
+- 🎓 **Real Feynman teaching** — explains like a teacher, uses analogies, and won't let you advance until a practice gate (≥80%) confirms you understand
+- 🔁 **Spaced review + recitation homework** — brings key points back on a schedule and makes you recite from memory
+- 💾 **Progress that survives** — close the chat and resume exactly where you left off (`progress.json`)
+- 🔒 **Local-first & private** — your book never leaves your machine; no external LLM key
+- 🌐 **Cross-host** — runs in WorkBuddy / Claude Code / Copilot CLI / Amp / OpenClaw
+- 🔎 **Optional authorized web fetch** — when you have no local book and explicitly allow it, the agent can search public sources for you (no DRM / paywall bypass)
+
 ---
 
 ## ▶ See it teach (real session)
@@ -184,6 +193,15 @@ Step 3 Course-ify  参考/<book>/ → content cleanup + heading tree → 书库/
 ## 项目一句话
 
 **本地书文件 → 课程文件夹 → agent 逐课教学闭环**，辅助人类 / AI 高效率学习：知道书籍构造、感知学习进度、一课一精华（去废话冗余）。
+
+**它能做什么：**
+- 📚 **把任意书课程化**（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ）→ 结构化课树
+- 🎓 **真·费曼教学**：像老师一样讲解、打比方，用练习闸门（≥80%）确认你真懂才放行
+- 🔁 **间隔复习 + 背诵作业**：按节奏回放重点，逼你脱稿复述
+- 💾 **进度可续**：关掉对话也能从原处接着学（`progress.json`）
+- 🔒 **本地优先、隐私**：书不出本机，无外部 LLM key
+- 🌐 **跨宿主**：WorkBuddy / Claude Code / Copilot CLI / Amp / OpenClaw 通用
+- 🔎 **可选授权联网获取**：无本地书且你明确授权时，agent 可代你检索公开来源（不绕 DRM/付费墙）
 
 ## 快速开始（三步）
 
