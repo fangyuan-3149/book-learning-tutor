@@ -137,16 +137,14 @@ Step 2 Download  pick a result → getContent chapter by chapter → 参考/<boo
 Step 3 Course-ify  参考/<book>/ → content cleanup + heading tree → 书库/<book>/ nested course (direct read, no 预处理/)
 ```
 
-**Source pool tiers** (`data/sources/`):
+**Source pool (local, user-owned):** the crawler reads source rules from a `data/sources/` directory **on your own machine** — the repo **ships none**, so clone-and-run starts empty. You plug in rules three ways: import from a subscription URL (`import_source.py`), let the agent derive a rule by reading a sample page (`discover.py`), or drop your own `active/` rules in. The pipeline then loads whatever you supplied.
 
 | Dir | Meaning |
 |---|---|
-| `active/` | pure-parse / JS-extract sources (pipeline default load, verified usable) |
-| `archive/` | full backup (incl. login / Java bridge / browser-needed sources, archived, not run) |
+| `active/` | pure-parse / JS-extract sources you supplied (pipeline default load) |
+| `archive/` | full backup you keep (incl. login / Java bridge / browser-needed sources, archived, not run) |
 | `discovered/` | new sources the agent derived by reading sample pages (discover.py output) |
-| `imported/` | sources `import_source.py` batch-imported and verified from subscription URLs (`verified.json`) |
-
-> Current `imported/verified.json` = **143 unique usable sources** (union across imports; survival pre-filter + per-source L1 verify + dead-cause classification).
+| `imported/` | sources you batch-imported and verified from your own subscription URLs (`verified.json`) |
 
 ## Toolchain (`tools/`)
 
@@ -174,6 +172,10 @@ Step 3 Course-ify  参考/<book>/ → content cleanup + heading tree → 书库/
 - **Code license**: this repo (parse / course-ify engine, skill, scripts) is released under **MIT**, see [`LICENSE`](./LICENSE).
 - **Book content**: the repo **contains no book text**; the user must supply local book files and bear copyright and compliance responsibility; details in [`免责声明.md`](./免责声明.md).
 - **Crawler scripts**: `search` / `download` / `import_source` / `discover` are optional legacy capabilities, used by the user at their own risk, not in the external main path.
+
+## Contributing
+
+Code is MIT — you're free to fork, modify, and redistribute it (keep the license notice). Bug reports, teaching-pattern improvements, and parser fixes are welcome via issues or PRs. The repo deliberately ships **no book content and no book sources**; please don't add any.
 
 ---
 
@@ -273,16 +275,14 @@ Step 2 下载   选一条结果 → 逐章 getContent → 参考/<书名>/
 Step 3 课程化  参考/<书名>/ → 正文净化 + 标题树 → 书库/<书名>/ 嵌套课程（直读，无 预处理/）
 ```
 
-**书源池分层**（`data/sources/`）：
+**书源池（本地、使用者自备）**：爬虫从**你本机的** `data/sources/` 目录读规则——仓库**不附带任何书源**，clone 下来默认是空的。填入规则有三种方式：从订阅 URL 批量导入（`import_source.py`）、让 agent 读样本页自动推导（`discover.py`）、或自己把规则放进 `active/`。之后 pipeline 才会加载你提供的源。
 
 | 目录 | 含义 |
 |---|---|
-| `active/` | 纯解析 / JS 提取源（pipeline 默认加载，已验证可用） |
-| `archive/` | 全量备份（含登录 / Java 桥 / 需浏览器源，归档不跑） |
+| `active/` | 你提供的纯解析 / JS 提取源（pipeline 默认加载） |
+| `archive/` | 你保存的全量备份（含登录 / Java 桥 / 需浏览器源，归档不跑） |
 | `discovered/` | agent 读样本页推导出的新源（discover.py 产物） |
-| `imported/` | `import_source.py` 从订阅 URL 批量导入并校验的可用源（`verified.json`） |
-
-> 当前 `imported/verified.json` = **143 条唯一可用源**（跨历次导入 union；存活预筛 + 逐源 L1 校验 + 死因分类）。
+| `imported/` | 你从自有订阅 URL 批量导入并校验的源（`verified.json`） |
 
 ## 工具链（`tools/`）
 
@@ -310,3 +310,7 @@ Step 3 课程化  参考/<书名>/ → 正文净化 + 标题树 → 书库/<书�
 - **代码许可**：本仓库（解析 / 课程化引擎、技能、脚本）以 **MIT 许可**发布，见 [`LICENSE`](./LICENSE)。
 - **书籍内容**：仓库**不包含任何书籍正文**，使用者须自行提供本地书文件，并自行承担版权与合规责任；详见 [`免责声明.md`](./免责声明.md)。
 - **爬虫脚本**：`search` / `download` / `import_source` / `discover` 为可选遗留能力，使用者自行使用、自担责，不在对外主路径内。
+
+## 共建与贡献
+
+代码以 MIT 发布，你可自由 fork、修改、再分发（保留许可声明即可）。欢迎通过 issue 或 PR 提交 bug 报告、教学规律改进、解析器修复。本仓库**刻意不包含任何书籍内容、也不附带任何书源**，请勿向仓库添加此类内容。
