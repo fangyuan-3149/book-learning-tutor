@@ -280,6 +280,7 @@ def _select(cur, seg):
     else:
         sel = body
     out = []
+    seen = set()
     for el in cur:
         try:
             found = el.select(sel)
@@ -289,7 +290,14 @@ def _select(cur, seg):
         # 故对 class./id./tag. 选择器补充自身匹配。
         if _self_matches(el, body):
             found = [el] + list(found)
-        out += found
+        # 去重（按对象身份）：父级 select 已返回子节点、子节点自身又匹配时，同一节点
+        # 会被返回多次（如 `class.x@tag.div@class.book` 2 节点→4 节点）；Collapse 重复，
+        # 不改变"不同节点各自匹配"的合法语义。
+        for f in found:
+            fid = id(f)
+            if fid not in seen:
+                seen.add(fid)
+                out.append(f)
     if index is not None and out:
         out = [out[index]] if index < len(out) else []
     return out
