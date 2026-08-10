@@ -1268,7 +1268,9 @@ def _epub_open(zf):
         mt = re.search(r'\bmedia-type="([^"]+)"', attrs, re.IGNORECASE)
         if iid and href:
             h = posixpath.normpath(posixpath.join(opf_dir, href.group(1)))
-            manifest[h] = (iid.group(1), mt.group(1) if mt else "")
+            props = re.search(r'\bproperties="([^"]+)"', attrs, re.IGNORECASE)
+            manifest[h] = (iid.group(1), mt.group(1) if mt else "",
+                           props.group(1) if props else "")
     # spine（有序 doc idref → href）
     spine_ids = re.findall(r'<itemref\b[^>]*?\bidref="([^"]+)"', opf_xml, re.IGNORECASE)
     id_to_href = {v[0]: k for k, v in manifest.items()}
@@ -1461,6 +1463,11 @@ def _epub_figures(path):
                         posixpath.join(posixpath.dirname(doc_href), src.split("#")[0]))
                     item = manifest.get(rel)
                     mt = item[1] if item else ""
+                    props = item[2] if item else ""
+                    if "cover-image" in props:
+                        # EPUB3 封面图（manifest properties="cover-image"）：低信号，
+                        # 排除避免污染多模态训练数据。
+                        continue
                     try:
                         data = zf.read(rel)
                     except KeyError:

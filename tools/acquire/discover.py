@@ -27,6 +27,7 @@ from bs4 import BeautifulSoup
 
 from fetcher import Fetcher
 from rules import parse_object
+from notice import report_source_unavailable
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 DISCOVERED_DIR = ROOT / "data" / "sources" / "discovered"
@@ -199,7 +200,11 @@ def main():
         selftest()
         return
     src = json.loads(Path(args.source).read_text(encoding="utf-8"))
-    res = discover_from_source(src, args.url)
+    try:
+        res = discover_from_source(src, args.url)
+    except Exception as e:
+        report_source_unavailable(f"样本页获取 / 校验失败：{e}", ctx="discover")
+        raise SystemExit(1)
     print(json.dumps(res, ensure_ascii=False, indent=2))
 
 

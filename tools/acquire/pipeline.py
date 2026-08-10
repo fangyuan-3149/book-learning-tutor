@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from source_engine import SourceEngine, load_sources, _safe, REF_DIR, write_robust
 from book_formats import extract as extract_book, unpack_cbz, extract_figures  # 格式层：文本三元组 + CBZ 漫画解包 + PDF 插图
+from notice import report_source_unavailable  # 在线获取失败 → 统一提示使用者自供源
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 SOURCES_DIR = ROOT / "data" / "sources"
@@ -88,7 +89,7 @@ def download(source_name, book_url, book_name=None, max_chapters=None):
     src = next((s for s in sources if source_name == s.get("bookSourceName", "")), None) \
         or next((s for s in sources if source_name in s.get("bookSourceName", "")), None)
     if not src:
-        raise SystemExit(f"未找到源：{source_name}")
+        raise RuntimeError(f"未找到源：{source_name}（请用 all-local 提供本地书）")
     eng = SourceEngine(src)
     return eng.download_book(book_url, book_name, max_chapters)
 
@@ -727,9 +728,17 @@ def main():
     if args.cmd == "search":
         res, cache = search_all(args.kw, args.idx)
         _print_search(res)
+        errs = [r for r in res if r.get("_error")]
+        if errs and len(errs) == len(res):
+            report_source_unavailable("所有书源均不可达或返回错误（详见上方 ✗ 项）",
+                                      ctx=f"search {args.kw}")
         print(f"\n[缓存] {cache}")
     elif args.cmd == "download":
-        info = download(args.source, args.url, args.name, args.max)
+        try:
+            info = download(args.source, args.url, args.name, args.max)
+        except Exception as e:
+            report_source_unavailable(f"下载失败：{e}", ctx=f"download {args.source}")
+            raise SystemExit(1)
         print(f"[下载] {info['name']} → {info['dir']}（{info['chapters']} 章）")
     elif args.cmd == "convert":
         out, n = convert(args.name)
@@ -745,16 +754,21 @@ def main():
     elif args.cmd == "all-local":
         all_local(args.path, args.name)
     elif args.cmd == "all":
-        res, cache = search_all(args.kw, args.idx)
-        ok = [r for r in res if r.get("bookUrl") and not r.get("_error")]
-        if not ok:
-            print("[all] 无可用结果，先单独跑 search 看哪一步出问题。")
-            return
-        b = ok[0]
-        print(f"[all] 选用：{b.get('name')} / {b.get('_source')} / {b.get('bookUrl')}")
-        info = download(b.get("_source"), b["bookUrl"], b.get("name"), args.max)
-        out, n = convert(info["name"])
-        print(f"[all] 完成 → {out}（{n} 节）")
+        try:
+            res, cache = search_all(args.kw, args.idx)
+            ok = [r for r in res if r.get("bookUrl") and not r.get("_error")]
+            if not ok:
+                report_source_unavailable(
+                    "搜索无可用结果（所有书源不可达或返回错误）", ctx=f"all {args.kw}")
+                return
+            b = ok[0]
+            print(f"[all] 选用：{b.get('name')} / {b.get('_source')} / {b.get('bookUrl')}")
+            info = download(b.get("_source"), b["bookUrl"], b.get("name"), args.max)
+            out, n = convert(info["name"])
+            print(f"[all] 完成 → {out}（{n} 节）")
+        except Exception as e:
+            report_source_unavailable(f"获取失败：{e}", ctx=f"all {args.kw}")
+            raise SystemExit(1)
     else:
         ap.print_help()
 

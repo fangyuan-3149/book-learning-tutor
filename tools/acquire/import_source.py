@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fetcher import Fetcher
 from source_engine import SourceEngine
+from notice import report_source_unavailable
 
 IMPORTED_DIR = ROOT / "data" / "sources" / "imported"
 IMPORTED_DIR.mkdir(parents=True, exist_ok=True)
@@ -425,6 +426,9 @@ def main():
                         probe=not args.no_probe, timeout=args.timeout,
                         verbose=not args.quiet, cache=not args.no_cache)
     rep["elapsed_s"] = round(time.time() - t0, 1)
+    if rep.get("fetch") == "FAIL":
+        report_source_unavailable(f"{rep.get('reason','获取失败')}：{rep.get('detail','')[:160]}",
+                                  ctx="import_source")
     print(json.dumps(rep, ensure_ascii=False, indent=2), flush=True)
 
 

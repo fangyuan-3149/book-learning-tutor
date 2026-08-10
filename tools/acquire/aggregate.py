@@ -4,7 +4,7 @@
 写入 data/sources/imported/verified.json（pipeline 实际加载的池）。
 
 设计纪律（对齐项目铁律）：
-- 仅合法内容源；不碰全网自主爬 / 盗版站发现。
+- 使用者自行提供书源 / 网页源，责任由使用者承担；本工具不提供任何网站源码、爬虫或代理。
 - 零外部 key；纯 L1（不显式开浏览器）。
 - 复用 import_source 的 解包→存活预筛→逐源 L1 校验→死因分类→并池 核心。
 
@@ -32,7 +32,11 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from import_source import (import_source, run_validation, VERIFIED, IMPORTED_DIR)
 from source_engine import load_sources
-from ingest_lists import LISTS   # 已知订阅注册表（7 个书源列表）
+from notice import report_source_unavailable
+try:
+    from ingest_lists import LISTS   # 已知订阅注册表（7 个书源列表，可选）
+except ImportError:
+    LISTS = {}                       # 缺订阅注册表时仅跳过订阅分支，不影响本地/URL 分支
 
 LOCAL_REPO_ROOT = ROOT / "开源阅读"
 
@@ -149,6 +153,14 @@ def main():
             print(f"[agg] URL {u}: usable={rep.get('usable')} added={rep.get('added')}")
 
     summarize(entries)
+    # 池为空 → 在线获取全线失败，统一提示使用者自供源
+    try:
+        pool = json.load(open(VERIFIED, encoding="utf-8")) if VERIFIED.exists() else []
+    except Exception:
+        pool = []
+    if not pool:
+        report_source_unavailable("书源池为空：所有订阅 / 本地 / URL 入口均不可用或零存活",
+                                  ctx="aggregate")
 
 
 if __name__ == "__main__":
