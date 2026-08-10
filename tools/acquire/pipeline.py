@@ -609,6 +609,51 @@ def selftest():
         print("  passed（长标题→全标题解耦匹配，截断不再影响对齐）")
         # 目录碰撞防护：两章名清洗后前 120 字相同 → 加序号互不覆盖
         _selftest_figures_collision()
+        # ---- progress 命令：写回 + 弱课复习 自测（隔离，复用本临时 book_dir）----
+        import types as _types
+        def _pa(**kw):
+            d = dict(book=book, quiz_template=False, next=False, current=None,
+                     done=None, mastery=None, add_quiz=None, q=None, bloom="理解",
+                     a=None, learner="", correct=None, report=False, review=False)
+            d.update(kw)
+            return _types.SimpleNamespace(**d)
+        prog2 = {
+            "version": 1, "book": book, "current": None, "total_lessons": 3,
+            "updated": None,
+            "lessons": {
+                "第01章_A/第01课_A.md": {"status": "unstarted", "mastery": 0,
+                    "unresolved": [], "quiz": [], "chapter": "A", "lesson": "A"},
+                "第02章_B/第01课_B.md": {"status": "unstarted", "mastery": 0,
+                    "unresolved": [], "quiz": [], "chapter": "B", "lesson": "B"},
+                "第03章_C/第01课_C.md": {"status": "unstarted", "mastery": 0,
+                    "unresolved": [], "quiz": [], "chapter": "C", "lesson": "C"},
+            },
+        }
+        (book_dir / "progress.json").write_text(
+            json.dumps(prog2, ensure_ascii=False), encoding="utf-8")
+        cmd_progress(_pa(next=True, mastery=0.8))
+        cmd_progress(_pa(add_quiz="1", q="A?", bloom="记忆", a="是", learner="是", correct="true"))
+        cmd_progress(_pa(add_quiz="2", q="B?", bloom="理解", a="否", learner="否", correct="false"))
+        reload = load_progress(book_dir)
+        assert reload["lessons"]["第01章_A/第01课_A.md"]["status"] == "done"
+        assert reload["lessons"]["第01章_A/第01课_A.md"]["mastery"] == 0.8
+        assert reload["current"] == "第02章_B/第01课_B.md"
+        assert len(reload["lessons"]["第01章_A/第01课_A.md"]["quiz"]) == 1
+        assert reload["lessons"]["第01章_A/第01课_A.md"]["quiz"][0]["correct"] is True
+        assert reload["lessons"]["第02章_B/第01课_B.md"]["quiz"][0]["correct"] is False
+        # 弱课复习：仅第02章（已学且有错）应入列表；第01章已达标、第03章未学 都不应入
+        import io as _io
+        _old = sys.stdout
+        sys.stdout = _io.StringIO()
+        try:
+            cmd_progress(_pa(review=True))
+        finally:
+            _out = sys.stdout.getvalue(); sys.stdout = _old
+        _tail = _out.split("--- 需复习的弱课 ---")[-1]
+        assert "第02章_B/第01课_B.md" in _tail, "弱课列表缺 B"
+        assert "第03章_C/第01课_C.md" not in _tail, "未学课不应进弱课列表"
+        assert "第01章_A/第01课_A.md" not in _tail, "已达标课不应进弱课列表"
+        print("  passed（progress 写回 + 弱课复习逻辑）")
     finally:
         _rmtree_force(book_dir)
     print("  selftest passed。")
@@ -710,6 +755,159 @@ def all_local(path, book_name=None):
     print(f"[all-local] 完成 → 书库/{_safe(name)}/（可开始逐课教学）")
 
 
+# ---------------------------------------------------------------------------
+# 进度 / 测验 写回（替代 agent 手改嵌套 JSON；安全、可复现、原子覆盖）
+# 设计：agent 在教学闭环里负责「出题意图 + 判分」，本命令只负责把结果
+#       结构化地写回 progress.json，并提供掌握度汇总 / 弱课复习清单。
+# ---------------------------------------------------------------------------
+_BLOOM_LEVELS = ["记忆", "理解", "应用", "分析"]
+
+_BLOOM_TEMPLATE = """\
+Bloom 认知分层出题提纲（每课 2–4 题，覆盖 2+ 层级）：
+  记忆：这节课的关键定义 / 术语 / 公式是？请复述 ___。
+  理解：用自己的话解释 ___ 为什么成立 / ___ 与 ___ 的区别？
+  应用：给定新情境 Z，用本节课方法解决 ___。
+  分析：___ 的假设是什么？若条件改成 ___，结论会怎样？
+（题目与参考答案由 agent 基于本课正文拟写，再用 `progress --add-quiz` 留存。）
+"""
+
+
+def _book_dir(book):
+    d = ROOT / "书库" / _safe(book)
+    if not d.exists():
+        raise SystemExit(f"未找到 书库/{_safe(book)}/，请先跑完 all-local 或 course_gen")
+    return d
+
+
+def load_progress(book_dir):
+    p = book_dir / "progress.json"
+    if not p.exists():
+        raise SystemExit(f"未找到 {p}（该书尚未生成课程）")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def save_progress(book_dir, data):
+    (book_dir / "progress.json").write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _now():
+    import datetime
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+
+def resolve_lesson(progress, key):
+    """把 序号 / 子串 / 全路径 解析为精确的 lesson rel（按章/课零填充排序）。"""
+    lessons = progress.get("lessons", {})
+    keys = sorted(lessons.keys())
+    if not key:
+        return None
+    if key.isdigit():
+        i = int(key) - 1
+        return keys[i] if 0 <= i < len(keys) else None
+    key_l = key.lower()
+    for k in keys:
+        if key_l in k.lower():
+            return k
+    return None
+
+
+def _print_status(progress):
+    lessons = progress["lessons"]
+    done = sum(1 for v in lessons.values() if v.get("status") == "done")
+    total = len(lessons)
+    print(f"[进度] {progress.get('book', '?')}：{done}/{total} 课完成；当前：{progress.get('current')}")
+
+
+def _print_report(progress, review=False):
+    lessons = progress["lessons"]
+    print(f"\n===== 掌握度汇总：{progress.get('book', '?')} =====")
+    weak = []
+    for k in sorted(lessons.keys()):
+        v = lessons[k]
+        m = v.get("mastery", 0) or 0
+        quizzes = v.get("quiz", []) or []
+        wrong = sum(1 for q in quizzes if q.get("correct") is False)
+        # 仅把「已学过但薄弱」的课标记为需复习；未开始且无测验的课只是「未学」，不算弱。
+        engaged = (v.get("status") in ("done", "in_progress")) or quizzes
+        flag = ""
+        if engaged and (m < 0.6 or wrong > 0):
+            weak.append((k, m, wrong))
+            flag = "  ← 需复习" if review else ""
+        print(f"  {k}\n    掌握度={m:.2f}  测验={len(quizzes)}（错 {wrong}）{flag}")
+    done = sum(1 for v in lessons.values() if v.get("status") == "done")
+    avg = sum((v.get("mastery", 0) or 0) for v in lessons.values()) / max(len(lessons), 1)
+    print(f"  完成 {done}/{len(lessons)} 课；平均掌握度 {avg:.2f}")
+    if review:
+        print("\n--- 需复习的弱课 ---")
+        for k, m, w in weak:
+            print(f"  {k}  (掌握度 {m:.2f}, 错 {w})")
+        if not weak:
+            print("  （无，全部达标）")
+
+
+def cmd_progress(args):
+    book_dir = _book_dir(args.book)
+    prog = load_progress(book_dir)
+    if args.quiz_template:
+        print(_BLOOM_TEMPLATE)
+        return
+    if args.next:
+        cur = prog.get("current")
+        keys = sorted(prog["lessons"].keys())
+        if cur and cur in prog["lessons"]:
+            les = prog["lessons"][cur]
+            les["status"] = "done"
+            if args.mastery is not None:
+                les["mastery"] = args.mastery
+            i = keys.index(cur)
+            prog["current"] = keys[i + 1] if i + 1 < len(keys) else cur
+        elif keys:
+            # 当前为空（尚未开始）→ 把第一课标记完成并推进到第二课
+            les0 = prog["lessons"][keys[0]]
+            les0["status"] = "done"
+            if args.mastery is not None:
+                les0["mastery"] = args.mastery
+            prog["current"] = keys[1] if len(keys) > 1 else keys[0]
+        print(f"[progress] 已推进：当前 → {prog.get('current')}")
+    if args.current:
+        rel = resolve_lesson(prog, args.current)
+        if not rel:
+            print(f"[progress] 未匹配到课：{args.current}")
+        else:
+            prog["current"] = rel
+            print(f"[progress] 当前设为：{rel}")
+    if args.done:
+        rel = resolve_lesson(prog, args.done)
+        if not rel:
+            print(f"[progress] 未匹配到课：{args.done}")
+        else:
+            les = prog["lessons"][rel]
+            les["status"] = "done"
+            if args.mastery is not None:
+                les["mastery"] = args.mastery
+            print(f"[progress] 标记完成：{rel}（掌握度={les['mastery']}）")
+    if args.add_quiz:
+        rel = resolve_lesson(prog, args.add_quiz)
+        if not rel:
+            print(f"[progress] 未匹配到课：{args.add_quiz}")
+        else:
+            correct = None
+            if args.correct is not None:
+                correct = args.correct.lower() in ("1", "true", "yes", "y")
+            item = {"q": args.q or "", "bloom": args.bloom,
+                    "a": args.a or "", "learner": args.learner or "",
+                    "correct": correct, "ts": _now()}
+            prog["lessons"][rel].setdefault("quiz", []).append(item)
+            print(f"[progress] 已追加测验：{rel}（{args.bloom}）")
+    prog["updated"] = _now()
+    save_progress(book_dir, prog)
+    if args.report or args.review:
+        _print_report(prog, review=args.review)
+    else:
+        _print_status(prog)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd")
@@ -723,6 +921,21 @@ def main():
     pst = sub.add_parser("selftest")
     pa = sub.add_parser("all"); pa.add_argument("kw"); pa.add_argument("--idx", type=int, nargs="*"); pa.add_argument("--max", type=int, default=None)
     pl = sub.add_parser("all-local"); pl.add_argument("path"); pl.add_argument("--name", default=None)
+    pp = sub.add_parser("progress", help="进度/测验写回与汇总（替代手改 progress.json）")
+    pp.add_argument("book")
+    pp.add_argument("--next", action="store_true", help="把当前课标记完成并推进到下一课")
+    pp.add_argument("--done", metavar="LESSON", help="标记某课完成（LESSON=序号或子串匹配）")
+    pp.add_argument("--mastery", type=float, default=None, help="掌握度 0~1（配合 --next/--done）")
+    pp.add_argument("--current", metavar="LESSON", help="设置当前课")
+    pp.add_argument("--add-quiz", metavar="LESSON", help="给某课追加一条测验记录")
+    pp.add_argument("--q", help="题目")
+    pp.add_argument("--bloom", default="理解", help="Bloom 层级（记忆/理解/应用/分析）")
+    pp.add_argument("--a", help="参考答案/讲解")
+    pp.add_argument("--learner", default="", help="学习者作答")
+    pp.add_argument("--correct", default=None, help="作答是否正确（true/false）")
+    pp.add_argument("--report", action="store_true", help="打印掌握度汇总")
+    pp.add_argument("--review", action="store_true", help="列出需复习的弱课")
+    pp.add_argument("--quiz-template", action="store_true", help="打印 Bloom 出题提纲")
     args = ap.parse_args()
 
     if args.cmd == "search":
@@ -769,6 +982,8 @@ def main():
         except Exception as e:
             report_source_unavailable(f"获取失败：{e}", ctx=f"all {args.kw}")
             raise SystemExit(1)
+    elif args.cmd == "progress":
+        cmd_progress(args)
     else:
         ap.print_help()
 
