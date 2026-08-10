@@ -11,7 +11,7 @@ js_bridge.py — 在本机 Node 里执行 Legado 书源规则中的 @js: / {{jav
   以「URL → 响应体」映射注入 Node，避免"Node 里同步发请求"的难题。
 - 只有真正需要 webView/startBrowser 的源才被拒绝（见 url_option.BrowserRequired）。
 
-性能（吸收台账 B-06）
+性能（实现参考）
 --------------------
 PyExecJS 每次 call 都会**重启一个 Node 进程**，实测单次约 210ms —— 一本千章书仅
 进程启动就要 3 分半。因此默认走**常驻 Node worker**：
@@ -21,7 +21,7 @@ PyExecJS 每次 call 都会**重启一个 Node 进程**，实测单次约 210ms 
   这样同一条规则在不同章节间代码文本恒定，缓存才真正命中。
 Node 起不来时自动回退 PyExecJS，功能不受影响，只是慢。
 
-作用域（吸收台账 B-07）
+作用域（实现参考）
 ----------------------
 java.put/get 分 source / book / chapter 三层，写入最内层、读取逐层回溯。
 换书调用 reset("book")、换章调用 reset("chapter")，避免跨书跨章串变量。

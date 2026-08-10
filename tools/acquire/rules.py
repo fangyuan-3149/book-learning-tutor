@@ -1,7 +1,7 @@
-"""Legado 规则解释器（v2）。
+"""书源规则解释器（v2）。
 
-设计目标：把开源阅读(Legado)书源规则引擎的内核内化到本项目，做到
-「给一个书源 JSON 就能检索解析」。对齐 Legado AnalyzeRule 的核心语义，
+设计目标：实现一个兼容书源规则格式（受 Legado 书源 JSON 格式启发）的纯解析型
+解释器，做到「给一个书源 JSON 就能检索解析」。对齐该类规则引擎的核心语义，
 但只实现纯解析型书源（不依赖 java.* / WebView 桥的动作）。
 
 支持的规则类型：
@@ -68,7 +68,7 @@ def sniff(rule):
     return "css"
 
 
-# ---------- JSONPath（吸收台账 B-26，对齐 K1 所用 jayway JsonPath 常用子集）----------
+# ---------- JSONPath（对齐 jayway JsonPath 常用子集）----------
 # 支持：$ 根 / .key / ['key'] / [n] / [-n] / [*] / [a:b:c] 切片 /
 #       [1,2] 索引并集 / ['a','b'] 键并集 / ..key 递归下降 / ..* 全递归
 # 不支持（真实书源极少用，且会引入依赖）：过滤表达式 [?(...)]、脚本表达式
@@ -253,7 +253,7 @@ def _select(cur, seg):
     else:
         body = seg
 
-    # B-04（吸收自 refgd/legado）：前缀后无参数时直接返回空，不让下游拼出非法选择器。
+    # B-04（历史实现参考）：前缀后无参数时直接返回空，不让下游拼出非法选择器。
     for pfx in ("tag.", "class.", "id.", "css."):
         if body == pfx.rstrip(".") or body == pfx:
             return []
@@ -355,7 +355,7 @@ def eval_css(root, rule):
 def _clean_html(el):
     """取内部 HTML 并去掉 script/style。
 
-    B-02（吸收自 refgd/legado）：**必须先 clone 再删**。原实现直接在原树上
+    B-02（历史实现参考）：**必须先 clone 再删**。原实现直接在原树上
     remove，会永久破坏该节点，导致同一元素上的后续规则（如再取 @text）拿到残缺内容。
     """
     if not hasattr(el, "decode_contents"):
@@ -602,7 +602,7 @@ def parse_object(rule_dict, root, base=""):
 
 
 def _field_text(val):
-    """B-03（吸收自 refgd/legado）：字段规则末段没写 `@text` 时，Legado 默认取文本。
+    """B-03（历史实现参考）：字段规则末段没写 `@text` 时，规则引擎默认取文本。
 
     我们的 eval_css 对"未显式指定模式"统一返回原始节点（迭代键需要这个行为），
     到了**字段层**必须收敛成字符串，否则 `class.author`（没写 @text）会把一个

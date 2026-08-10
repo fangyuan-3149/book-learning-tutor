@@ -8,7 +8,7 @@
  * 约定：所有对外可见的东西都挂在 globalThis 上，
  * 这样 vm.Script(...).runInThisContext() 里的书源代码才能直接引用。
  *
- * 变量作用域分三层（吸收台账 B-07）：source / book / chapter。
+ * 变量作用域分三层：source / book / chapter。
  * java.put 写入当前最内层；java.get 依 chapter → book → source 顺序回溯。
  * 三个作用域对象**身份恒定**（清空用 delete 键，不重新赋值），
  * 以保证 session 别名一直有效。

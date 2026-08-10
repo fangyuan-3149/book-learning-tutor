@@ -1,4 +1,4 @@
-"""统一 URL+Option 解析器（吸收台账 B-01，来源 Legado `AnalyzeUrl.kt`）。
+"""统一 URL+Option 解析器（兼容书源规则格式中 `AnalyzeUrl` 的 URL+Option 写法）。
 
 解决的问题
 ----------

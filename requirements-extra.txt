@@ -1,4 +1,4 @@
-# 授业（Shouye）—— 可选依赖：在线书源 / 爬虫 高级能力
+# BookTutor（授业）—— 可选依赖：在线书源 / 爬虫 高级能力
 #
 # 仅当你要用 pipeline 的 search / download（从网站取书）时才需要。
 # 纯本地「格式转换 + 课程化」（teach.py / all-local）不需要本文件。

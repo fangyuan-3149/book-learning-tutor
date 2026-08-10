@@ -1,5 +1,5 @@
 ---
-name: 授业 (shouye)
+name: 授业 (BookTutor)
 description: 把使用者自行提供的本地书（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ）或本地资料课程化，并逐课交互式带人类学习。当用户说「学这本书 <本地路径> / 把这本 PDF 课程化 / 教我这本书」时调用。本技能不联网、不爬取、不提供任何书源或网页源，仅处理使用者已提供的本地文件。
 agent_created: true
 ---

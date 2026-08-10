@@ -1,4 +1,4 @@
-"""书源引擎：内化开源阅读(Legado)的「搜索 / 详情 / 目录 / 正文」四大动作。
+"""书源引擎：实现书源「搜索 / 详情 / 目录 / 正文」四大动作（兼容书源规则格式）。
 
 设计（对应 计划书 Phase 0）：
 - 单源引擎：给定一本书源 dict，即可 searchBook / getBookInfo / getChapterList / getContent。

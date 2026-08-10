@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-teach.py — 授业 · 一键把本地书变成逐课课程，并告诉你怎么开始学。
+teach.py — BookTutor · 一键把本地书变成逐课课程，并告诉你怎么开始学。
 
 用法：
     python teach.py "路径/到/书.pdf" [--name 书名]

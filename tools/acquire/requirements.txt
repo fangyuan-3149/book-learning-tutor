@@ -1,19 +1,11 @@
-# 授业 · 运行时依赖（slim，重建于 2026-08-10）
-# 安装：python -m venv venv && venv/Scripts/python -m pip install -r tools/acquire/requirements.txt
+# BookTutor（授业）—— 引擎依赖统一说明
 #
-# 教学主路径（all-local → ingest/convert/course_gen/progress）必需：
-PyMuPDF==1.24.14        # PDF/DJVU 抽取与插图（唯一大依赖 ~46MB）
-beautifulsoup4==4.15.0  # HTML 清洗（book_formats / pipeline）
-EbookLib==0.20          # EPUB 解析
-python-docx==1.2.0      # DOCX 解析
-mobi==0.4.1             # MOBI/AZW 解析
-# 爬虫轨道（用户保留，非教学主路径但保持可用）：
-httpx==0.28.1           # L1 抓取层（HTTP/2、UA 池、会话、鲁棒解码）
-lxml==6.1.1             # XPath 规则（rules.py eval_xpath）
-pycryptodome==3.23.0    # JS 桥源 java.* AES/DES/base64/md5 加解密·签名
-PyExecJS==1.5.1         # @js:/{{java.*}} 片段求值桥（需本机 Node，无浏览器无 key）
+# 本仓库的**唯一依赖真相源**是仓库根 `requirements.txt`（核心）+
+# `requirements-extra.txt`（在线书源 / 爬虫可选）。
+# 根文件已覆盖本目录全部运行所需（格式解析 + 课程化 + 爬虫轨道）。
 #
-# 说明：本环境曾误装 torch / transformers / cv2(OpenCV) / scipy / pandas /
-#       sklearn / sympy / matplotlib / onnxruntime / polars / botocore 等约 1.4GB
-#       无关包，均未在 tools/ 中被 import（见占用分析），已从 slim venv 剔除。
-#       重建后 venv 由 ~1.6GB 降至 ~80MB。上面的版本号与旧 venv 中已验证版本一致。
+# 安装一律使用根文件：
+#   python setup_env.py                              # 建 venv_slim + 装根 requirements.txt
+# 或手动：venv_slim\Scripts\python.exe -m pip install -r requirements.txt
+#
+# 本文件不再单独维护版本号，避免与根文件冲突（旧版 PyMuPDF 固定值已废弃）。

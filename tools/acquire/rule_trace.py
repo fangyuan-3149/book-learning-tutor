@@ -1,4 +1,4 @@
-"""规则执行追踪树（吸收自 Legado_Max `model/debug/RuleExecutionNode.kt`，B-05）。
+"""规则执行追踪树（参考 Legado_Max 的 `RuleExecutionNode` 思路）。
 
 为什么需要它：书源规则是一条链（`class.x@tag.a.0@href##\\d+##`），失败时只看到
 "结果为空"，无法知道是哪一段断的。追踪树把每一段的输入/输出/匹配数/耗时/异常

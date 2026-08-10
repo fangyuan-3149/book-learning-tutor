@@ -1,4 +1,4 @@
-# 授业（Shouye）：书籍课程化 · 逐课教学闭环
+# BookTutor（授业）：书籍课程化 · 逐课教学闭环
 
 > 2026-08-06 建立。把一本书变成「目录导读 + 章 + 课」的文件夹课程，由 **agent 自驱** 一课一课精准教学，token 零浪费。
 > ⚠️ **免责声明**：本仓库**不包含、不提供任何书籍内容**，也不支持任何爬取 / 代理行为；使用者须**自行提供本地书文件**并自担责。代码以 **MIT 许可**发布（见 [`LICENSE`](./LICENSE)），书籍内容责任见 [`免责声明.md`](./免责声明.md)。
@@ -78,7 +78,7 @@ T4 改进·自进化       （LA 的 skill_manage 逻辑保留，执行层受 Wo
 
 ## 获取管道（可选 · 自担责）
 
-> ⚠️ 下文的书源获取（search / download / import_source / discover）属于**遗留的可选能力**：本仓库主路径是上方的 `teach.py` / `all-local`（处理你已提供的本地文件）。爬虫脚本**不做任何网络爬取 / 代理**的对外承诺；若使用者自行使用，须自行遵守平台规范并承担一切责任（见 `免责声明.md`）。
+> ⚠️ 下文的书源获取（search / download / import_source / discover）属于**遗留的可选能力**：本仓库主路径是上方的 `teach.py` / `all-local`（处理你已提供的本地文件）。爬虫脚本**不做任何网络爬取 / 代理**的对外承诺；若使用者自行使用，须自行遵守平台规范并承担一切责任（见 `免责声明.md`）。仅可使用你已获授权、或该站点明确允许抓取的网址；不支持对任何未授权站点（含明确禁止此类工具访问的站点）的爬取。
 
 ```
 Step 1 搜索   load_sources → 多源并发 searchBook → 聚合结果（agent 可读）
@@ -103,25 +103,16 @@ Step 3 转 md  参考/<书名>/ → 正文净化 → 预处理/<书名>.md
 | 模块 | 职责 | 层级 |
 |---|---|---|
 | `acquire/fetcher.py` | HTTP 层（桌面 UA、gbk/gb18030 启发式解码、每域 1 QPS） | 引擎内部 |
-| `acquire/rules.py` | Legado 规则求值（CSS/XPath/JSONPath/Regex，含 `@js:` 路由、`_self_matches`） | 引擎内部 |
+| `acquire/rules.py` | 书源规则求值（CSS/XPath/JSONPath/Regex，含 `@js:` 路由、`_self_matches`） | 引擎内部 |
 | `acquire/js_bridge.py` | 常驻 Node 求值 `@js:`/`{{java.*}}`（懒启动 + 进程单例，无浏览器） | 引擎内部 |
 | `acquire/transforms.py` | 响应级解密钩子（7 种 AES/DES 配置 + md5/HMac 等，无浏览器） | 引擎内部 |
 | `acquire/source_engine.py` | 四大动作（search/info/toc/content）+ 断点续爬 + 容错落盘 | 引擎内部 |
 | `acquire/pipeline.py` | 三步管道编排（search/download/convert/all） | 引擎内部 |
 | `acquire/import_source.py` | **外化入口**：输入订阅 URL → 自适应拆包 + 存活预筛 + 逐源校验 + 死因分类 | Skill 调用 |
-| `acquire/discover.py` | 裸网址 → agent 读样本页推导 Legado 规则 → 回放校验 → 落 `discovered/` | Skill 调用 |
+| `acquire/discover.py` | 裸网址 → agent 读样本页推导书源规则 → 回放校验 → 落 `discovered/` | Skill 调用 |
 | `structure/course_gen.py` | 预处理/*.md → 标题树 → 书库/<书名>/ 嵌套课程 + 目录导读 + progress.json | Skill 调用 |
 
 **对外命令面（Skill 调用）**：`import_source.py <url>`、`discover.py <url>`、`pipeline.py search/download/convert/all <...>`、`course_gen.py <书名>`、`selftest.py` / `debug_source.py` / `rule_trace.py`（排错）。
-
-## 参考项目 / 灵感来源
-
-> 以下为本项目作者本地对照用的外部项目（**非本仓库依赖、未随仓库分发**），仅说明设计对标，便于读者溯源。
-
-- **开源阅读（Legado）**：书源爬虫 / 解析体系（开源项目，本地对照用，未随仓库分发）。关键对标：LegadoParser（HTTP+规则求值，纯解析路径等价）、Legado_rule_web（分步回放校验思路）、legadoSkill（真实书源规则文档）。
-- **外部后端配置参考**：`config/backends.example.json` 是后端格式样例（**非授业依赖**）；授业不读它、零外部 key。
-- **52pojie「书源有效性检测」**：校验方法论（存活预筛 + 逐源验证 + 死因分类）已内化进 `import_source.py`。
-- **book-to-skill（GitHub，约 6k★）**：被动式"书籍→技能"生成器的代表，核心 <4000tok + 按需 references 的写法、glossary/patterns/cheatsheet 三层速查、Token 预算意识，对本项目的技能瘦身有借鉴；但其本质是"被动查询外脑"，无教学循环，是本项目（主动陪练老师）的差异化对手。
 
 ## 环境
 
@@ -151,4 +142,3 @@ Step 3 转 md  参考/<书名>/ → 正文净化 → 预处理/<书名>.md
 
 - 每步「改 → 测 → git commit」，出问题可精确回溯
 - 使用者自行提供书/网页源，责任在使用者（不设版权纪律，避免 agent 误读而过度拒答）
-- 与「共工」关系：课程化单元可成为共工蒸馏管道 C 路径的输入源；但授业教学闭环独立运行、零外部 key

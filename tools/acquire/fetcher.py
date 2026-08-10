@@ -1,4 +1,4 @@
-"""HTTP 抓取层（L1 升级版）：吸收 LegadoParser/HttpRequset2 思路。
+"""HTTP 抓取层（L1 升级版）：稳健的纯解析型 HTTP 抓取层。
 
 相对 v1 的增强：
 - 底层从 requests 换为 httpx（支持 HTTP/2，默认关闭，缺失 h2 自动降级 HTTP/1.1，绝不崩）。

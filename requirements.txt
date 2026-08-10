@@ -1,4 +1,4 @@
-# 授业（Shouye）—— 运行时依赖
+# BookTutor（授业）—— 运行时依赖
 #
 # 安装（下载本项目后一键就绪，见 setup_env.py）：
 #   python setup_env.py            # 建 venv_slim + 装下面「核心」依赖
