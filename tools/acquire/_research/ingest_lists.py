@@ -5,8 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 让同仓 tools/acquire 可达（source_engine/fetcher 等）
 """摄取并分类全部书源列表，把可用（pure）源探测后装入 active/ 池。
 
-设计（对应 2026-08-06 用户指令"各种网址所有的书源除了登录搞不定，其他的全部搞定"）：
-- 离线分类：login（有 loginUrl，按用户要求过滤）/ js（java.* 或 @js 桥，L1 不做浏览器也过滤）
+设计目标（离线分类 + 并发探测可用源，自动跳过无头环境无法处理的类型）：
+- 离线分类：login（有 loginUrl，按规则过滤）/ js（java.* 或 @js 桥，L1 不做浏览器也过滤）
   / pure（无登录、无 JS 桥，引擎可跑）。
 - pure 源：并发探测搜索是否真返回书，把"工作"的去重后写入 active/verified_all.json。
 - 复用 SourceEngine.search，共享一个 Fetcher（httpx 线程安全）以提速。
@@ -30,7 +30,7 @@ from fetcher import Fetcher
 ROOT = Path(__file__).resolve().parent.parent.parent
 ACTIVE = ROOT / "data" / "sources" / "active"
 
-# 用户此前给出的 7 个书源列表
+# 已知书源订阅列表（部分可能已失效，存活预筛会自然淘汰）
 LISTS = {
     "iu2": "https://legado.aoaostar.com/sources/71e56d4f.json",
     "full2159": "https://gcore.jsdelivr.net/gh/yuedu520/yuedu/250422.json",
