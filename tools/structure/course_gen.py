@@ -3,7 +3,7 @@
 """
 course_gen.py —— 授业 管道四阶段·阶段③ 结构生成器
 
-把一本书（参考/<书名>/ 抽取目录 或 预处理 markdown）按标题层级
+把一本书（参考/<书名>/ 抽取目录 或 手动 markdown 文件）按标题层级
 切成「章 / 课」，生成可逐课精学的课程文件夹：
 
     书库/<书名>/
@@ -21,7 +21,7 @@ course_gen.py —— 授业 管道四阶段·阶段③ 结构生成器
 
 用法：
     python course_gen.py 参考/天降/            # 直接吃抽取目录（推荐，无需中间预处理文件）
-    python course_gen.py 预处理/天降.md        # 兼容：手动/测试喂 markdown
+    python course_gen.py 某书.md                  # 兼容：直接喂 markdown 文件（手动/测试）
     python course_gen.py 参考/天降/ --book 天降 --out 书库
     python course_gen.py --selftest
 """
@@ -626,7 +626,7 @@ def selftest(verbose: bool = True) -> bool:
 # ---------------------------------------------------------------------------
 def main(argv=None):
     p = argparse.ArgumentParser(description='授业 结构生成器：markdown → 书库/<书名>/ 嵌套课程')
-    p.add_argument('input', nargs='?', help='参考/<书名>/ 目录 或 预处理/<书名>.md 文件')
+    p.add_argument('input', nargs='?', help='参考/<书名>/ 目录 或 任意 markdown 文件')
     p.add_argument('--book', help='书名（默认取文件名 stem）')
     p.add_argument('--out', default='书库', help='输出根目录（默认 书库）')
     p.add_argument('--chapter-level', type=int, default=1, help='章标题层级（默认 1=#）')
