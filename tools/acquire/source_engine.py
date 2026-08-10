@@ -395,4 +395,18 @@ class SourceEngine:
             self._save_progress(done)             # 中断也保活进度
             raise
         self._save_progress(done)
+        self._write_sections_json()   # 补齐 _sections.json：爬虫书也能拿到章→节层级
         return {"name": name, "dir": str(self.book_dir), "chapters": count}
+
+    def _write_sections_json(self):
+        """为爬虫下载的每章 NNNN_*.txt 生成 _sections.json（章→节层级）。
+
+        复用 book_formats.build_sections_manifest：在章内再切节，节级条目带 body 切片，
+        保证 generate_from_ref 不会把整章正文重复挂到每个节下。无 txt（漫画/空书）直接返回。
+        """
+        from book_formats import build_sections_manifest
+        manifest = build_sections_manifest(self.book_dir)
+        if not manifest:
+            return  # 漫画/空书无 txt，无需 _sections.json（漫画走 generate_comic）
+        self._write_aux(self.book_dir / "_sections.json",
+                        json.dumps(manifest, ensure_ascii=False, indent=2))

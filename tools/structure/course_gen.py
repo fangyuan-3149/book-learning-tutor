@@ -408,9 +408,15 @@ def generate_from_ref(ref_dir: str | Path,
         parts.append(f"# {_strip_num_prefix(ch)}\n")  # 章：一级标题
         for e in groups[ch]:
             body = ""
-            fpath = src_dir / e["file"]
-            if fpath.exists():
-                body = _sanitize_body(html_to_text(fpath.read_text(encoding="utf-8")))
+            if e.get("body") is not None:
+                # 爬虫/本地抽取路径：节级正文切片已随 _sections.json 落盘，直接消费，
+                # 避免整章正文重复挂到每个节下。
+                body = _sanitize_body(html_to_text(e["body"]))
+            else:
+                # 兼容旧清单/无 body 的条目：回退读整文件（章级 section=None 走此分支）。
+                fpath = src_dir / e["file"]
+                if fpath.exists():
+                    body = _sanitize_body(html_to_text(fpath.read_text(encoding="utf-8")))
             if e.get("section"):
                 parts.append(f"## {_strip_num_prefix(e['section'])}\n\n{body}\n")  # 节：二级
             else:
