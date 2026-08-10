@@ -148,5 +148,96 @@ def test_crawler_sections_nesting():
         _force_clean()
 
 
+BOOK2 = "crawl_mix"
+
+
+def _force_clean_dir(book):
+    """底层 Win32 force-delete（绕 safe-delete 钩子）；不 import pipeline（其顶层
+    `from source_engine import` 在包导入下会失败），本地复刻 _rmtree_force。"""
+    import ctypes, os
+
+    def rmtree_force(path):
+        path = str(path)
+        kernel32 = getattr(ctypes, "windll", None) and ctypes.windll.kernel32
+        if kernel32 is not None:
+            for root, dirs, files in os.walk(path, topdown=False):
+                for f in files:
+                    fp = os.path.join(root, f)
+                    try:
+                        kernel32.SetFileAttributesW(fp, 0x80); kernel32.DeleteFileW(fp)
+                    except Exception: pass
+                for d in dirs:
+                    dp = os.path.join(root, d)
+                    try:
+                        kernel32.SetFileAttributesW(dp, 0x80); kernel32.RemoveDirectoryW(dp)
+                    except Exception: pass
+            try:
+                kernel32.SetFileAttributesW(path, 0x80); kernel32.RemoveDirectoryW(path)
+            except Exception: pass
+        else:
+            import shutil; shutil.rmtree(path, ignore_errors=True)
+
+    for base in ("参考", "书库"):
+        rmtree_force(ROOT / base / book)
+
+
+def test_short_real_section_retained():
+    """混排章节（2 长节 + 1 真实短节）：短节必须保留，不被 200 绝对地板误删。
+
+    这是 _drop_toc_like_triples 阈值修正的回归锁：旧逻辑用 max(200, ...) 绝对地板，
+    在『中位数很大、夹一个真实短节』时短节会被删掉；新逻辑改相对阈值 + 均匀短章全保留。
+    """
+    ref = ROOT / "参考" / BOOK2
+    ref.mkdir(parents=True, exist_ok=True)
+    try:
+        long_a = ("函数连续性是微积分的基石，它描述了当自变量发生微小变化时因变量"
+                  "是否也只发生微小变化。epsilon-delta 语言给出了严格的数学定义，"
+                  "是理解极限与导数之前必须掌握的概念框架。") * 2  # 约 120 字，长节
+        short = ("导数即变化率：函数在某点的导数就是因变量对该自变量的瞬时变化率，"
+                 "物理上恰好对应瞬时速度。")  # 真实短节（约 55 字，<200 但 >40 地板）
+        long_b = ("微分中值定理把函数在闭区间上的整体性质与开区间内的局部导数联系起来，"
+                  "罗尔定理、拉格朗日中值定理与柯西中值定理构成了微分学的理论主干，"
+                  "也是后续积分学与泰勒展开的重要铺垫。") * 2
+        ch = (
+            "第1节 连续\n" + long_a + "\n"
+            "第2节 导数定义\n" + short + "\n"
+            "第3节 中值定理\n" + long_b + "\n"
+        )
+        (ref / "0001_微积分.txt").write_text(ch, encoding="utf-8")
+        (ref / "_meta.json").write_text(
+            json.dumps({"name": "混合测试", "author": "佚名", "source": "crawl",
+                        "chapterCount": 1, "bookType": "textbook"}, ensure_ascii=False),
+            encoding="utf-8")
+
+        from tools.acquire.book_formats import build_sections_manifest
+        manifest = build_sections_manifest(ref)
+        (ref / "_sections.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        entries = [e for e in manifest if e["chapter"] == "微积分"]
+        # 关键不变量：3 节全在（含第2节真实短节），未被 200 地板删。
+        assert len(entries) == 3, f"混合章应保留3节，实际 {len(entries)}（短节被误删？）"
+        assert sum(1 for e in entries if e["section"]) == 3, "3 条都应带 section"
+
+        _course_gen(BOOK2)
+        bd = ROOT / "书库" / BOOK2
+        lessons = sorted(p.name for p in (bd / "第01章_微积分").glob("第*课_*.md"))
+        assert len(lessons) == 3, f"第01章应含3课（短节保留），实际 {lessons}"
+        # 短节课文件应含自身正文（变化率那句）
+        found = False
+        for ln in lessons:
+            if "变化率" in (bd / "第01章_微积分" / ln).read_text(encoding="utf-8"):
+                found = True; break
+        assert found, "短节正文（变化率）丢失"
+
+        print(f"[test_crawler_sections] 短节保留通过：混合章 3 节全留（短节未被 200 地板删）")
+        return True
+    finally:
+        _force_clean_dir(BOOK2)
+
+
 if __name__ == "__main__":
-    sys.exit(0 if test_crawler_sections_nesting() else 1)
+    ok = True
+    ok = test_crawler_sections_nesting() and ok
+    ok = test_short_real_section_retained() and ok
+    sys.exit(0 if ok else 1)

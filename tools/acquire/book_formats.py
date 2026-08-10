@@ -330,13 +330,23 @@ def _clean_triples(triples):
 
 
 def _drop_toc_like_triples(triples):
-    """丢弃『正文过短』的疑似目录(TOC)/许可证样板项（同 _drop_toc_like_sections）。"""
+    """丢弃『正文过短』的疑似目录(TOC)/许可证样板项（同 _drop_toc_like_sections）。
+
+    阈值修正（v 后）：不再用绝对 200 字符地板——否则整章内容本就短（短诗/词典条目/
+    极简课本）或混排里夹一个真实短节时，短节会被一刀切删掉、内容凭空丢失。改为：
+    - 中位数 < 200 → 整章 uniformly 短，不存在『长正文 vs 目录』双峰，全部保留；
+    - 中位数 >= 200 → 用相对阈值（中位数的 2%，下限 40）丢弃明显过短的疑似目录项，
+      保留真实短节（短节只要不比中位数短 50 倍就留，长章里夹的短节不会被误删）。
+    保留旧兜底：若全删光则回退原表，绝不让整章消失。
+    """
     import statistics
     if len(triples) < 3:
         return triples
     bodies = [len(t) for _, _, t in triples]
     med = statistics.median(bodies) if bodies else 0
-    thr = max(200, int(0.02 * med)) if med > 0 else 200
+    if med < 200:
+        return triples
+    thr = max(40, int(0.02 * med)) if med > 0 else 40
     out = [(c, s, t) for (c, s, t) in triples if len(t) >= thr]
     return out if out else triples
 
@@ -348,13 +358,19 @@ def _drop_empty_sections(sections):
 
 
 def _drop_toc_like_sections(sections):
-    """丢弃"正文过短"的疑似目录(TOC)/许可证样板项（兼容旧调用）。"""
+    """丢弃"正文过短"的疑似目录(TOC)/许可证样板项（兼容旧调用，逻辑同 _drop_toc_like_triples）。
+
+    阈值修正（v 后）：中位数 < 200 全保留；否则相对阈值（中位数 2%，下限 40）丢疑似目录项；
+    全删则回退原表。避免真实短节被 200 绝对地板误删。
+    """
     import statistics
     if len(sections) < 3:
         return sections
     bodies = [len(x) for _, x in sections]
     med = statistics.median(bodies) if bodies else 0
-    thr = max(200, int(0.02 * med)) if med > 0 else 200
+    if med < 200:
+        return sections
+    thr = max(40, int(0.02 * med)) if med > 0 else 40
     out = [(t, x) for t, x in sections if len(x) >= thr]
     return out if out else sections
 
