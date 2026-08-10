@@ -194,8 +194,7 @@ The agent is a **professional subject teacher for this specific book** — a tea
 
 ---
 
-## 5. Discipline
+## 5. Notes
 
-- Each step: change → test → commit.
 - If output isn't as expected, first check `bookType` / `needs_ocr` in `参考/<book>/_meta.json` before judging.
 - Read details on demand: `references/source_selection.md` (T1 enrichment sources), `references/self_evolution.md` (T4 self-evolution), `references/teaching_patterns.md` (teaching principles / adaptive strategy / common pitfalls).

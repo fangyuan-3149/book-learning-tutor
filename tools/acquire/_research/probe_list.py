@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # 让同仓 tools/acquire 可达（source_engine/fetcher 等）
-"""书源列表探查 / 试搜工具（引擎内部，非对外 Skill）。
+"""书源列表探查 / 试搜工具。
 
 用法：
     python probe_list.py <书源列表URL>                 # 拉取+分类+汇总

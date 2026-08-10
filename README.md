@@ -127,9 +127,9 @@ T4 Improvement·self-evolve  suggestion buffer → generality filter → stabili
 
 > Teaching outputs (prep / review cards / recitation / knowledge base / homework / teaching notes / learner profile) all live in **`storage/` inside the skill dir** (auto-adapts to install location, consistent across hosts), not polluting the book library; course-level progress is always `书库/<book>/progress.json` (atomically written back via `pipeline.py progress`). Detailed teaching principles / adaptive strategy / common pitfalls in the skill's `references/teaching_patterns.md`.
 
-## Acquisition pipeline (optional · user responsibility)
+## Acquisition pipeline (optional · user-supplied sources)
 
-> The book-source acquisition below (search / download / import_source / discover) is an **optional legacy capability** outside this skill's main path: the main path is `teach.py` / `all-local` above (processing the local files you provided). The crawler scripts make **no outward promise of web crawling / proxying**; if you use them, comply with platform norms and bear all responsibility (see `免责声明.md`). Only use URLs you are authorized for, or that the site explicitly allows crawling; not supported for any unauthorized site (including those explicitly forbidding such tools).
+> The book-source acquisition below (search / download / import_source / discover) is an **optional capability** that complements the local-file main path (`teach.py` / `all-local`). It only runs when you provide source rules in `data/sources/` (the repo ships none) and explicitly drive it — it makes no unsolicited network calls. If you use it, comply with platform norms and bear all responsibility (see `免责声明.md`). Only use URLs you are authorized for, or that the site explicitly allows crawling; not supported for any unauthorized site (including those explicitly forbidding such tools).
 
 ```
 Step 1 Search    load_sources → multi-source concurrent searchBook → aggregate results (agent-readable)
@@ -265,9 +265,9 @@ T4 改进·自进化 建议缓冲 → 普适筛选 → 稳定冻结（**跨宿�
 
 > 教学产物（备课 / 复习卡 / 背诵 / 知识库 / 作业 / 教学笔记 / 习惯画像）全存于**技能目录内的 `storage/`**（随安装位置自动适配，跨宿主一致），不污染书库；课程级进度永远是 `书库/<书名>/progress.json`（用 `pipeline.py progress` 命令原子写回）。详细教学原则 / 自适应策略 / 常见陷阱见技能内 `references/teaching_patterns.md`。
 
-## 获取管道（可选 · 自担责）
+## 获取管道（可选 · 自备用源）
 
-> 下文的书源获取（search / download / import_source / discover）属于**可选遗留能力**，不在本技能主路径内：本仓库主路径是上方的 `teach.py` / `all-local`（处理你已提供的本地文件）。爬虫脚本**不做任何网络爬取 / 代理**的对外承诺；若使用者自行使用，须自行遵守平台规范并承担一切责任（见 `免责声明.md`）。仅可使用你已获授权、或该站点明确允许抓取的网址；不支持对任何未授权站点（含明确禁止此类工具访问的站点）的爬取。
+> 下文的书源获取（search / download / import_source / discover）属于**可选能力**，是对本地文件主路径（上方 `teach.py` / `all-local`）的补充：只有当你在 `data/sources/` 提供了源规则（仓库不附带）并显式驱动时才运行，**不会主动发起任何网络调用**。使用者若自行使用，须自行遵守平台规范并承担一切责任（见 `免责声明.md`）。仅可使用你已获授权、或该站点明确允许抓取的网址；不支持对任何未授权站点（含明确禁止此类工具访问的站点）的爬取。
 
 ```
 Step 1 搜索   load_sources → 多源并发 searchBook → 聚合结果（agent 可读）
