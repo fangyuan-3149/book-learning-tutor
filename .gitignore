@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+venv_slim/
 
 # 数据与产物（代码入库，书库数据不入库）
 书库/
@@ -46,6 +47,3 @@ _backup_*/
 
 # 本地二进制（djvulibre 等；用户本机放置，不入库）
 vendor/
-
-# 备份目录（本地快照，不入库）
-_backup_*/

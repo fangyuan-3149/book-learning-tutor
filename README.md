@@ -10,7 +10,7 @@
 
 ## 快速开始（三步）
 
-> 前提：仓库根已建精简 venv（`./venv_slim/Scripts/python.exe`，含 bs4/PyMuPDF 等依赖；或用任意含依赖的 Python）。命令均相对仓库根，克隆到任意目录都能跑。
+> 前提：先跑 `python setup_env.py` 一键建好精简 venv（`venv_slim/`）并装齐依赖（详见 [`setup_env.py`](./setup_env.py) 与 `requirements.txt`）；之后所有命令相对仓库根，克隆到任意目录都能跑。
 
 **1. 准备一本本地书**（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ），自行提供，责任在使用者。
 
@@ -118,14 +118,14 @@ Step 3 转 md  参考/<书名>/ → 正文净化 → 预处理/<书名>.md
 
 > 以下为本项目作者本地对照用的外部项目（**非本仓库依赖、未随仓库分发**），仅说明设计对标，便于读者溯源。
 
-- **开源阅读（Legado）**：书源爬虫 / 解析体系（作者本地路径，未入库）。关键对标：LegadoParser（HTTP+规则求值，纯解析路径等价）、Legado_rule_web（分步回放校验思路）、legadoSkill（真实书源规则文档）。
-- **共工主项目**：`config/backends.json` 是后端格式参考（**非授业依赖**）；授业不读它、零外部 key。
+- **开源阅读（Legado）**：书源爬虫 / 解析体系（开源项目，本地对照用，未随仓库分发）。关键对标：LegadoParser（HTTP+规则求值，纯解析路径等价）、Legado_rule_web（分步回放校验思路）、legadoSkill（真实书源规则文档）。
+- **外部后端配置参考**：`config/backends.example.json` 是后端格式样例（**非授业依赖**）；授业不读它、零外部 key。
 - **52pojie「书源有效性检测」**：校验方法论（存活预筛 + 逐源验证 + 死因分类）已内化进 `import_source.py`。
 - **book-to-skill（GitHub，约 6k★）**：被动式"书籍→技能"生成器的代表，核心 <4000tok + 按需 references 的写法、glossary/patterns/cheatsheet 三层速查、Token 预算意识，对本项目的技能瘦身有借鉴；但其本质是"被动查询外脑"，无教学循环，是本项目（主动陪练老师）的差异化对手。
 
 ## 环境
 
-- Python 3.13（managed venv），Node 22（JS 桥常驻求值器）
+- Python 3.13（或 3.11+）；Node 22 仅在使用「在线书源 JS 桥」时才需要（可选，缺则自动跳过）
 - 仅纯解析依赖（httpx/bs4 等），**无浏览器 / 无 Playwright / 无外部 LLM key**
 
 ## 当前状态（勾选推进）

@@ -1,0 +1,13 @@
+# 授业（Shouye）—— 可选依赖：在线书源 / 爬虫 高级能力
+#
+# 仅当你要用 pipeline 的 search / download（从网站取书）时才需要。
+# 纯本地「格式转换 + 课程化」（teach.py / all-local）不需要本文件。
+#
+# 安装：
+#   venv_slim\Scripts\python.exe -m pip install -r requirements-extra.txt
+#
+# 注意：PyExecJS 需要本机装有 Node.js（js_bridge 优先用 Node 求值，
+#       无 Node 时退到 PyExecJS，再无则跳过 JS 求值——不会崩）。
+
+PyExecJS>=1.5            # @js: / {{java.*}} 书源桥（Node 后端求值；JS 桥源用）
+curl_cffi>=0.10          # L2-lite TLS 指纹伪装（被动指纹 403 用，待接入 fetcher）
