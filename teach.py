@@ -17,14 +17,24 @@ teach.py — 授业（Book Learning Tutor）· 一键把本地书变成逐课课
 """
 
 import argparse
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VENV_PY = ROOT / "venv_slim" / "Scripts" / "python.exe"
 PIPELINE = ROOT / "tools" / "acquire" / "pipeline.py"
+
+
+def _venv_python() -> Path:
+    """仓库自带精简 venv：Windows 在 Scripts/，POSIX 在 bin/。"""
+    if os.name == "nt":
+        return ROOT / "venv_slim" / "Scripts" / "python.exe"
+    return ROOT / "venv_slim" / "bin" / "python"
+
+
+VENV_PY = _venv_python()
 
 
 def pick_python() -> str:

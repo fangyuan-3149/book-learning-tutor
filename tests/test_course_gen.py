@@ -46,7 +46,6 @@ def test_generate_structure():
         assert '第01章 数与运算' in toc          # 显示标题已剥「第一章」
         assert '第01章 第一章' not in toc         # 无重复编号
         print(f"[test_course_gen] 通过：{res['chapters']} 章 / {res['lessons']} 课")
-        return True
     finally:
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)

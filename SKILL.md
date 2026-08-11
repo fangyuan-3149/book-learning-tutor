@@ -51,7 +51,7 @@ When the user **has no local book and gives no local path**, and **explicitly au
 
 ## 2. Commands (run from a directory containing `tools/`: repo root, or the user-level skill dir)
 
-Use this repo's slim venv for Python (already has bs4 etc., ~81MB): `./venv_slim/Scripts/python.exe` (at repo root; for self-deploy use any Python with the deps). Commands use relative paths, so they run from any cloned directory.
+Use this repo's slim venv for Python (already has bs4 etc., ~81MB): on Windows `./venv_slim/Scripts/python.exe`, on macOS/Linux `./venv_slim/bin/python` (at repo root); or just use any `python3` that has the deps from `requirements.txt`. Commands use relative paths, so they run from any cloned directory.
 
 > **Which directory?** Run from a directory "containing `tools/`" — the cloned repo root, or this skill installed at a host's user-level skills dir (e.g. WorkBuddy's `~/.workbuddy/skills/book-learning-tutor/`, Claude Code's `~/.claude/skills/book-learning-tutor/`). `teach.py` auto-locates the `tools/` engine in the same directory.
 

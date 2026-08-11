@@ -69,7 +69,6 @@ def test_novel_nesting():
                    "全文" not in lessons[0].name, \
                 f"小说课名不应为'全文'：{lessons[0].name}"
         print(f"[test_nesting] 小说通过：{len(chapters)} 章 / 每章 1 课（独立文件夹）")
-        return True
     finally:
         import shutil
         for base in ("参考", "书库"):
@@ -106,7 +105,6 @@ def test_textbook_nesting():
         c2 = sorted(p.name for p in (bd / "第02章_代数").glob("第*课_*.md"))
         assert len(c2) >= 1, f"第02章应含 >=1 课，实际 {c2}"
         print(f"[test_nesting] 课文通过：{len(chapters)} 章 / 章内含多课（章→节嵌套）")
-        return True
     finally:
         import shutil
         for base in ("参考", "书库"):
