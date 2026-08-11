@@ -33,6 +33,10 @@ import re
 import sys
 from pathlib import Path
 
+# 共享：文件名清洗（全仓唯一实现，见 tools/common/sanitize.py）
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from sanitize import safe_name
+
 # ---------------------------------------------------------------------------
 # 常量
 # ---------------------------------------------------------------------------
@@ -81,11 +85,9 @@ PROGRESS_VERSION = 1
 # 标题前缀「第X章 / 第X节 / 第X课」——文件名叫我们自己的 第XX章 前缀，故剥离避免重复
 _NUM_PREFIX = re.compile(r'^第[0-9零一二三四五六七八九十百千]+[章章节节节课部分段]\s*')
 
-# 顶层书名目录命名必须与管道（pipeline / figures_to_book / inline_figures 用的
-# source_engine._safe）保持一致，否则 figures/inline 按 书库/<书名> 找不到本目录。
-# 注意：只替换非法字符、保留空格，须与 source_engine._safe 同步。
-def _safe_book(name):
-    return re.sub(r'[\\/:*?"<>|]', '_', str(name)).strip() or 'untitled'
+# 顶层书名目录命名须与管道（pipeline / figures_to_book / inline_figures）一致，
+# 否则 figures/inline 按 书库/<书名> 找不到本目录。统一实现见 tools/common/sanitize.py。
+_safe_book = safe_name  # 兼容旧调用点
 
 
 def strip_number_prefix(title: str) -> str:

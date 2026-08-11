@@ -16,6 +16,7 @@
     txt   = eng.get_content(toc[0]["chapterUrl"])
 """
 import re
+import sys
 import json
 import time
 import urllib.parse
@@ -28,13 +29,16 @@ from js_bridge import JsBridge  # 纯 L1：在 Node 里求 @js:/{{java.*}} 片�
 from url_option import UrlOption, BrowserRequired  # B-01：URL+option 统一解析，四大动作共用
 from clean import clean_chapter_text  # B-22：正文清洗（落盘前过一遍）
 
+# 共享：文件名清洗（全仓唯一实现，见 tools/common/sanitize.py）
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from sanitize import safe_name
+
 ROOT = Path(__file__).resolve().parent.parent.parent  # 仓库根（由本文件位置推导，不硬编码绝对路径）
 DEBUG_DIR = ROOT / "data" / "debug"
 REF_DIR = ROOT / "参考"
 
 
-def _safe(name):
-    return re.sub(r"[\\/:*?\"<>|]", "_", str(name)).strip() or "untitled"
+_safe = safe_name  # 兼容旧调用点（pipeline.py 从 source_engine import _safe）
 
 
 def _is_json_text(text):

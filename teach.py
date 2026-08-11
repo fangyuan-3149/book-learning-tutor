@@ -18,13 +18,16 @@ teach.py — 授业（Book Learning Tutor）· 一键把本地书变成逐课课
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PIPELINE = ROOT / "tools" / "acquire" / "pipeline.py"
+
+# 共享：文件名清洗（全仓唯一实现，见 tools/common/sanitize.py）
+sys.path.insert(0, str(ROOT / "tools" / "common"))
+from sanitize import safe_name
 
 
 def _venv_python() -> Path:
@@ -42,11 +45,6 @@ def pick_python() -> str:
     if VENV_PY.exists():
         return str(VENV_PY)
     return sys.executable
-
-
-def safe_name(name: str) -> str:
-    """与管道一致的目录名清洗（仅去掉文件系统非法字符）。"""
-    return re.sub(r'[\\/:*?"<>|]', "_", str(name)).strip() or "untitled"
 
 
 def main() -> int:
