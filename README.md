@@ -91,7 +91,7 @@ The assistant starts at lesson 1 and runs the "real teacher" rhythm — prep →
 
 ## Architecture iron rules (user-finalized, must hold)
 
-- **Pure-local parsing first**; the external skill does **no web crawling / proxying**. Book-source crawling is a legacy capability, outside the external skill's scope; if the user uses it themselves they bear responsibility (see `免责声明.md`).
+- **Pure-local parsing first**; the default path does **no web crawling / proxying**. Book-source crawling is an **optional capability that complements the local-file main path** (see the Acquisition pipeline section) — it only runs when you supply source rules and explicitly drive it, and you bear all responsibility (see `免责声明.md`).
 - **Zero external LLM key**: every "intelligent" step (writing source rules, teaching lesson by lesson) is done by the agent itself; tools only do deterministic work (fetch / replay-verify / persist / pipeline orchestration).
 - **The Skill is the only external interface**: other agents only need to know "how to invoke the Skill" + "output lands in `书库/<book>/`", and don't touch internal engine details.
 
