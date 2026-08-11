@@ -2,7 +2,7 @@
 name: book-learning-tutor
 description: 把书课程化并作为「专业教师」逐课带人类学完：课前备课→详尽费曼教学→练习闸门→间隔复习→背诵作业→自进化。默认处理使用者已提供的本地书（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ）；**当使用者无本地书且明确授权时，可代为联网检索公开来源并用项目抓取工具获取**。当用户说「学这本书 <本地路径> / 把这本 PDF 课程化 / 教我这本书 / 继续学 <书> / 复习 <书> / 考考我 <书> / 帮我学 X」时调用。教学引擎已单包自包含，无需再加载其他技能。
 description_en: Course-ify a book the user provides and teach it lesson by lesson as a professional teacher — prep → detailed Feynman explanation → practice gate → spaced review → recitation homework → self-evolution. By default it processes the local book files the user provides (PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ); when the user has no local book and explicitly authorizes it, the agent may search public sources on their behalf and fetch via the project's acquisition tools. Trigger when the user says "study this book <path>", "course-ify this PDF", "teach me this book", "continue <book>", "review <book>", "quiz me on <book>", or "help me learn X". The teaching engine is self-contained in one skill — no other skill needs loading.
-version: 0.1.1
+version: 0.1.3
 agent_created: true
 ---
 
