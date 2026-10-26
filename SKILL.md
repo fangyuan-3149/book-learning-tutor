@@ -1,8 +1,8 @@
 ---
 name: book-learning-tutor
-description: 把书课程化并作为「专业教师」逐课带人类学完：课前备课→详尽费曼教学→练习闸门→间隔复习→背诵作业→自进化。默认处理使用者已提供的本地书（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ）；**当使用者无本地书且明确授权时，可代为联网检索公开来源并用项目抓取工具获取**。当用户说「学这本书 <本地路径> / 把这本 PDF 课程化 / 教我这本书 / 继续学 <书> / 复习 <书> / 考考我 <书> / 帮我学 X」时调用。教学引擎已单包自包含，无需再加载其他技能。
-description_en: Course-ify a book the user provides and teach it lesson by lesson as a professional teacher — prep → detailed Feynman explanation → practice gate → spaced review → recitation homework → self-evolution. By default it processes the local book files the user provides (PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ); when the user has no local book and explicitly authorizes it, the agent may search public sources on their behalf and fetch via the project's acquisition tools. Trigger when the user says "study this book <path>", "course-ify this PDF", "teach me this book", "continue <book>", "review <book>", "quiz me on <book>", or "help me learn X". The teaching engine is self-contained in one skill — no other skill needs loading.
-version: 0.1.3
+description: 把书课程化并作为「专业教师」逐课带人类学完：课前备课→详尽费曼教学→练习闸门→间隔复习→背诵作业→自进化。处理使用者已提供的本地书（PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ）或已落在 参考/<书名>/ 的书；**本技能不联网、不搜索、不下载 —— 找书请用 book-finder 技能**。当用户说「学这本书 <本地路径> / 把这本 PDF 课程化 / 教我这本书 / 继续学 <书> / 复习 <书> / 考考我 <书> / 帮我学 X」时调用。教学引擎已单包自包含，无需再加载其他技能。
+description_en: Course-ify a book the user provides and teach it lesson by lesson as a professional teacher — prep → detailed Feynman explanation → practice gate → spaced review → recitation homework → self-evolution. It works on local book files (PDF/EPUB/DJVU/MOBI/AZW/DOCX/TXT/MD/CBZ) or books already fetched into 参考/<book>/. **This skill never goes online — no searching, no downloading; use the book-finder skill to find a book.** Trigger when the user says "study this book <path>", "course-ify this PDF", "teach me this book", "continue <book>", "review <book>", "quiz me on <book>", or "help me learn X". The teaching engine is self-contained in one skill — no other skill needs loading.
+version: 0.2.0
 agent_created: true
 ---
 
@@ -12,18 +12,18 @@ Turn a book into a folder-based course ("table-of-contents guide" + chapters + l
 
 **This skill ships a complete teaching engine** (prep / Feynman / practice gate / adaptation / spaced review / recitation homework / self-evolution) as a single self-contained skill — **no other skill needs loading during teaching**, which avoids the "only half the engine loaded → degraded teaching" failure.
 
-By default it processes **only the local files the user provides**, and does not go online on its own. When the user **has no local book and explicitly authorizes it**, the agent may search public sources on their behalf and fetch via the project's acquisition tools (see "Source Acquisition (optional · authorized)").
+It processes **only the books already at hand** — files the user provides locally, or books that `book-finder` has fetched into `参考/<book>/`. **This skill makes no network calls of any kind.** To find a book online, load the separate **book-finder** skill; once its output lands in `参考/<book>/`, continue here from T0.
 
 This skill follows the **Agent Skills open standard**: storage and commands use relative paths and are **not bound to any specific host** — it installs into WorkBuddy (`~/.workbuddy/skills/`), Claude Code (`~/.claude/skills/`), Copilot CLI, Amp, OpenClaw, or any compatible host; it only needs `python3` + dependencies (see `requirements.txt`).
 
 ## Declaration (summary)
 
-- **Local by default**: the main path processes the user's local files; it does not go online or proxy on its own.
-- **Optional online acquisition (authorized)**: only when the user **has no local book and explicitly authorizes** it may the agent search public sources and fetch via the project's acquisition tools; the specific source/site must be confirmed with the user before fetching. **Any acquisition is authorized by and the responsibility of the user**; the skill does not bypass DRM / paywalls, and only targets public sources the user is authorized to access.
-- The user must comply with the laws of their jurisdiction and platform terms, and read the platform's ToS.
+- **Local only, no network**: the whole pipeline (extract → course-ify → teach → write back progress) runs on files already on disk. This skill ships no fetcher, no book source, and makes no HTTP request.
+- **Finding a book is a different skill**: search / online download lives in **book-finder** (a separate skill, user-supplied sources, user's own responsibility). Here you only consume its output directory `参考/<book>/`.
+- The user must comply with the laws of their jurisdiction and platform terms regarding any book content.
 - The repo (code + skill) is released under **MIT** (see root `LICENSE`). Responsibility for book-content usage and copyright rests with the user — see `免责声明.md` (DISCLAIMER).
 
-> Online acquisition reuses the repo's existing fetch / source tools (`pipeline.py`'s `search`/`download`/`all`, `discover.py`, `import_source.py`, `fetcher.py`, …). These depend on the **user-maintained** source registry (`data/`, git-ignored) and (optionally) `config/backends.json`; the skill's main path (local teaching) does not depend on them.
+> Split rationale: the acquisition stack used to live in `tools/acquire/`, which forced every local-teaching user to install `httpx` / `lxml` / `pycryptodome` just to course-ify a PDF. Those modules moved out to book-finder; this skill now needs only `pymupdf` / `beautifulsoup4` / `python-docx` / `mobi`.
 
 ---
 
@@ -35,19 +35,17 @@ This skill follows the **Agent Skills open standard**: storage and commands use 
 - "Summarize <book>" → see the knowledge-base highlights.
 - "Help me learn X" (no course) → fallback: this skill independently runs a T1 self-generated outline → teach / review / self-evolve.
 
-## Source Acquisition (optional · authorized)
+## Getting a book (not this skill's job)
 
-When the user **has no local book and gives no local path**, and **explicitly authorizes** proxy acquisition, follow this autonomous flow (otherwise always use local `all-local`):
+If the user has **no book at hand**, do not search online here — load the **book-finder** skill instead.
+It searches the user's own book sources and writes the raw book into `参考/<book>/`.
 
-1. **Search**: use the agent's own web search to find candidate public sources / URLs for the target book (title + author + edition).
-2. **Confirm**: list 1–3 candidates (site name + URL + scope to fetch) for the user to confirm; **do not fetch without confirmation**.
-3. **Fetch**: from a directory containing `tools/`, run the project's acquisition tools to pull the source into `参考/<book>/`:
-   - One-shot: `python tools/acquire/pipeline.py all <book keywords> [--idx N] [--max M]` (search → download → course-ify, needs local source registry `data/`).
-   - Named source: `python tools/acquire/pipeline.py search <keywords>` lists sources → `python tools/acquire/pipeline.py download <source> <bookURL> [book]` fetches a specific URL.
-   - No existing source: `python tools/acquire/discover.py <bookURL>` auto-discovers and writes a source from a sample page, then `download`.
-4. **Resume teaching**: once `参考/<book>/` is ready, proceed T0→T4 as usual.
+Once `参考/<book>/` exists (by any means — book-finder, or the user's own file), come back here and
+continue from T0. The two skills share exactly one contract: that directory layout.
 
-> **Preconditions & boundaries**: ① online acquisition needs the **full repo** (with `tools/acquire/`); with only the bare skill installed there are no fetchers — the agent only searches and hands the exact commands to the user to run inside the repo. ② structured book-site downloads depend on the **user-maintained** source registry `data/` (git-ignored, not shipped with the skill). ③ strictly respect the user's authorization scope and copyright / platform terms; **do not bypass DRM / paywalls**. Full details in `references/source_acquisition.md`.
+```bash
+python tools/structure/course_gen.py 参考/<book>/ --book <book>   # 参考/ → 书库/
+```
 
 ## 2. Commands (run from a directory containing `tools/`: repo root, or the user-level skill dir)
 

@@ -1,13 +1,22 @@
-# Book Learning Tutor（授业）—— 可选依赖：在线书源 / 爬虫 高级能力
+# Book Learning Tutor（授业）—— 可选依赖
 #
-# 仅当你要用 pipeline 的 search / download（从网站取书）时才需要。
-# 纯本地「格式转换 + 课程化」（teach.py / all-local）不需要本文件。
+# 纯本地「格式转换 + 课程化」（teach.py / all-local）**不需要本文件中任何一项**。
 #
 # 安装：
 #   venv_slim\Scripts\python.exe -m pip install -r requirements-extra.txt
-#
-# 注意：PyExecJS 需要本机装有 Node.js（js_bridge 优先用 Node 求值，
-#       无 Node 时退到 PyExecJS，再无则跳过 JS 求值——不会崩）。
 
-PyExecJS>=1.5            # @js: / {{java.*}} 书源桥（Node 后端求值；JS 桥源用）
-curl_cffi>=0.10          # L2-lite TLS 指纹伪装（被动指纹 403 用，待接入 fetcher）
+# ============================================================
+# 仅当你要在本仓库里跑「搜索 / 在线下载」时才需要。
+#
+# 2026-10-26：这些能力已剥离为独立技能 **book-finder**（见同级目录）。
+# 本仓库不再包含 source_engine / fetcher / rules / discover 等模块，
+# 因此这几项在这里已无用武之地 —— 要去搜书，请装 book-finder 自己的
+# requirements.txt，而不是装这些。
+#
+# 保留清单仅为「从旧版本升级、尚未迁移脚本」的用户过渡，下个版本删除。
+# ============================================================
+httpx==0.28.1            # HTTP 客户端（原 fetcher；0.28 已移除 proxies=）
+lxml==6.1.1              # bs4 的 XPath 解析后端（原 rules.py 选择器）
+pycryptodome==3.23.0     # 原书源内容解密（transforms）
+PyExecJS>=1.5            # 原 @js: / {{java.*}} 书源桥（需本机 Node）
+curl_cffi>=0.10          # 原 L2-lite TLS 指纹伪装（待接入 fetcher）

@@ -1,96 +1,38 @@
-"""获取管道编排：三步可独立验证（对应 计划书 Phase 0）。
+"""课程化管道编排（本地书 → 参考/ → 书库/）。
 
-Step 1 搜索： load_sources → 多源并发 searchBook → 聚合结果（模型可读）
-Step 2 下载： 选一条结果 → 逐章 getContent → 参考/<书名>/
-Step 3 课程化： 参考/<书名>/ → course_gen 直读 → 书库/<书名>/（无需常驻 预处理/）
-格式层 ingest： 本地 PDF/EPUB/DJVU/TXT/MD → 参考/<书名>/NNNN_title.txt（补"只能翻txt"短板）
+职责边界：
+    本技能只处理**已到手的书**（本地文件，或由 book-finder 抓到 参考/<书名>/ 的书）。
+    「搜索 / 在线下载」已剥离为独立技能 book-finder —— 这里不再有任何
+    网络请求、书源、爬虫代码，也不需要 httpx / lxml / pycryptodome。
 
 CLI：
-    python pipeline.py search  <书名> [--idx 15]      # Step1：搜书，打印+缓存结果
-    python pipeline.py download <bookUrl> <源名> [书名] # Step2：下载原书到 参考/
-    python pipeline.py ingest <文件或目录> [--name 书名] # 格式层：本地书 → 参考/
-    python pipeline.py all <书名> [--idx 15]           # 串联：搜→下→course_gen（参考/直读→书库/）
+    python pipeline.py ingest <文件或目录> [--name 书名]  # 格式层：本地书 → 参考/
+    python pipeline.py all-local <文件> [--name 书名]      # 本地书一键课程化
+    python pipeline.py figures <原书> [--name 书名]        # 抽取插图 → 书库/<书名>/_figures/
+    python pipeline.py inline <书名>                       # 把插图挂进课程正文
+    python pipeline.py progress <书名> [写回动作]           # 进度 / 测验写回与汇总
     # 课程化（参考/ → 书库/）统一由 tools/structure/course_gen.py 完成，无需常驻 预处理/：
     #     python tools/structure/course_gen.py 参考/<书名>/ --book <书名>
-    #     python pipeline.py all-local <文件> [--name 书名]   # 本地书一键课程化
-
-说明：默认只跑纯解析源（计划书已定）；java.*/webView 源在 search 阶段捕获异常跳过。
 """
 import os
 import re
 import sys
 import json
 import argparse
-import urllib.parse
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from source_engine import SourceEngine, load_sources, _safe, REF_DIR, write_robust
 from book_formats import extract as extract_book, unpack_cbz, extract_figures  # 格式层：文本三元组 + CBZ 漫画解包 + PDF 插图
-from notice import report_source_unavailable  # 在线获取失败 → 统一提示使用者自供源
+
+# 共享：文件名清洗 + 容错写（全仓唯一实现，见 tools/common/）
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+from sanitize import safe_name
+from io_robust import write_robust
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-SOURCES_DIR = ROOT / "data" / "sources"
-ACTIVE_DIR = SOURCES_DIR / "active"   # 活跃书源池（已去除登录/Java桥源）；归档见 archive/
-DISCOVERED_DIR = SOURCES_DIR / "discovered"  # 自动发现模块生成的源（discover.py 写入）
-IMPORTED_DIR = SOURCES_DIR / "imported"  # import_source.py 校验通过的外部订阅源
-SEARCH_CACHE = ROOT / "data" / "search"
-SEARCH_CACHE.mkdir(parents=True, exist_ok=True)
+REF_DIR = ROOT / "参考"      # 本地抽取 / book-finder 抓取的共同落点，course_gen 直读
 
+_safe = safe_name
 
-def _all_sources():
-    """聚合 active/ + discovered/ 下所有书源（支持 .json 数组/单对象/多文件）。
-    归档池(archive/)不参与搜索。discovered/ 来自 discover.py 自动发现的源。
-    """
-    out = []
-    for d in (ACTIVE_DIR, DISCOVERED_DIR, IMPORTED_DIR):
-        if not d.exists():
-            continue
-        for p in sorted(d.glob("*.json")):
-            try:
-                out += load_sources(str(p))
-            except Exception as e:
-                print(f"[warn] 载入 {p.name} 失败：{e}")
-    return out
-
-
-def search_all(keyword, indices=None, max_workers=6):
-    """Step1：对所有（或指定）书源并发搜索，聚合结果。"""
-    sources = _all_sources()
-    if indices:
-        sources = [sources[i] for i in indices if 0 <= i < len(sources)]
-    results = []
-
-    def _one(src):
-        try:
-            # 全源池并发搜索属批量场景：不落盘原始响应，否则每搜一次就堆几百个 HTML
-            eng = SourceEngine(src, debug=False)
-            return eng.search(keyword)
-        except Exception as e:
-            return [{"_error": str(e), "_source": src.get("bookSourceName", "?")}]
-
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(_one, s): s for s in sources}
-        for f in as_completed(futs):
-            res = f.result()
-            results.extend(res)
-    # 缓存
-    cache = SEARCH_CACHE / f"{_safe(keyword)}.json"
-    cache.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-    return results, str(cache)
-
-
-def download(source_name, book_url, book_name=None, max_chapters=None):
-    """Step2：按源名找到引擎，下载整本到 参考/<书名>/。max_chapters 可限章数（测试/大书用）。"""
-    sources = _all_sources()
-    # 先精确匹配源名，避免子串误选（如 "笔" 同时命中多个含 "笔" 的源）；
-    # 精确未命中再退回子串（保留用户只打关键字部分的便利）。
-    src = next((s for s in sources if source_name == s.get("bookSourceName", "")), None) \
-        or next((s for s in sources if source_name in s.get("bookSourceName", "")), None)
-    if not src:
-        raise RuntimeError(f"未找到源：{source_name}（请用 all-local 提供本地书）")
-    eng = SourceEngine(src)
-    return eng.download_book(book_url, book_name, max_chapters)
 
 
 # 注：原 convert（参考/ → 预处理/.md）已整体迁入 tools/structure/course_gen.py
@@ -830,16 +772,15 @@ def cmd_progress(args):
 
 
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(
+        prog="pipeline.py",
+        description="本地书课程化管道（搜索/在线下载请用 book-finder 技能）。")
     sub = ap.add_subparsers(dest="cmd")
-    ps = sub.add_parser("search"); ps.add_argument("kw"); ps.add_argument("--idx", type=int, nargs="*")
-    pd = sub.add_parser("download"); pd.add_argument("url"); pd.add_argument("source"); pd.add_argument("name", nargs="?"); pd.add_argument("--max", type=int, default=None)
     pi = sub.add_parser("ingest"); pi.add_argument("path"); pi.add_argument("--name", default=None)
     pi.add_argument("--chunks", type=int, default=None, help="扁平整包 CBZ 按图片序切成 N 话（仅漫画、且整包无分目录时生效）")
     pf = sub.add_parser("figures"); pf.add_argument("path"); pf.add_argument("--name", default=None)
     pg = sub.add_parser("inline"); pg.add_argument("name", help="书名（书库/<书名>/ 下的目录名）")
     pst = sub.add_parser("selftest")
-    pa = sub.add_parser("all"); pa.add_argument("kw"); pa.add_argument("--idx", type=int, nargs="*"); pa.add_argument("--max", type=int, default=None)
     pl = sub.add_parser("all-local"); pl.add_argument("path"); pl.add_argument("--name", default=None)
     pp = sub.add_parser("progress", help="进度/测验写回与汇总（替代手改 progress.json）")
     pp.add_argument("book")
@@ -858,22 +799,7 @@ def main():
     pp.add_argument("--quiz-template", action="store_true", help="打印 Bloom 出题提纲")
     args = ap.parse_args()
 
-    if args.cmd == "search":
-        res, cache = search_all(args.kw, args.idx)
-        _print_search(res)
-        errs = [r for r in res if r.get("_error")]
-        if errs and len(errs) == len(res):
-            report_source_unavailable("所有书源均不可达或返回错误（详见上方 ✗ 项）",
-                                      ctx=f"search {args.kw}")
-        print(f"\n[缓存] {cache}")
-    elif args.cmd == "download":
-        try:
-            info = download(args.source, args.url, args.name, args.max)
-        except Exception as e:
-            report_source_unavailable(f"下载失败：{e}", ctx=f"download {args.source}")
-            raise SystemExit(1)
-        print(f"[下载] {info['name']} → {info['dir']}（{info['chapters']} 章）")
-    elif args.cmd == "ingest":
+    if args.cmd == "ingest":
         ingest(args.path, args.name, cbz_chunks=args.chunks)
     elif args.cmd == "figures":
         figures_to_book(args.path, args.name)
@@ -883,41 +809,10 @@ def main():
         selftest()
     elif args.cmd == "all-local":
         all_local(args.path, args.name)
-    elif args.cmd == "all":
-        try:
-            res, cache = search_all(args.kw, args.idx)
-            ok = [r for r in res if r.get("bookUrl") and not r.get("_error")]
-            if not ok:
-                report_source_unavailable(
-                    "搜索无可用结果（所有书源不可达或返回错误）", ctx=f"all {args.kw}")
-                return
-            b = ok[0]
-            print(f"[all] 选用：{b.get('name')} / {b.get('_source')} / {b.get('bookUrl')}")
-            info = download(b.get("_source"), b["bookUrl"], b.get("name"), args.max)
-            ref_dir = REF_DIR / _safe(info["name"])
-            cg = Path(__file__).resolve().parent.parent / "structure" / "course_gen.py"
-            r = subprocess.run([sys.executable, str(cg), str(ref_dir), "--book", info["name"]], cwd=str(ROOT))
-            if r.returncode != 0:
-                raise RuntimeError(f"课程生成失败（exit={r.returncode}）")
-            print(f"[all] 完成 → 书库/{_safe(info['name'])}/")
-        except Exception as e:
-            report_source_unavailable(f"获取失败：{e}", ctx=f"all {args.kw}")
-            raise SystemExit(1)
     elif args.cmd == "progress":
         cmd_progress(args)
     else:
         ap.print_help()
-
-
-def _print_search(res):
-    n = len([r for r in res if r.get("bookUrl") and not r.get("_error")])
-    print(f"[搜索] 共 {len(res)} 条，其中有效 {n} 条：")
-    for i, r in enumerate(res):
-        if r.get("_error"):
-            print(f"  ✗ {r.get('_source')}: {r['_error'][:60]}")
-        else:
-            print(f"  {i:2d}. {r.get('name','?')} — {r.get('author','?')}  [{r.get('_source')}]")
-            print(f"       {r.get('bookUrl','')[:80]}")
 
 
 if __name__ == "__main__":

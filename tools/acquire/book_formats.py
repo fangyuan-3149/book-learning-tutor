@@ -269,59 +269,6 @@ def _split_hierarchical(text):
     return _clean_triples(triples)
 
 
-def split_chapter(chapter_title, chapter_text):
-    """把单章正文切成 (chapter, section, text) 三元组（章内再切节，复用节起点正则）。
-
-    供爬虫下载路径使用：source_engine 每章已落盘为独立 NNNN_*.txt，只需在章内再切节，
-    补齐教科书（章→节）的节级拆分——否则 generate_from_ref 退化成「每 txt=一章」会丢节。
-    与 _split_hierarchical 的章内切节逻辑一致，但不检测章起点（章已由爬虫按 TOC 切好）：
-    - 章内无节起点 → [(chapter, None, text)]（小说：章即最小单位）
-    - 有节起点 → 每个 (chapter, section, text)（课文：节是最小单位）
-    """
-    lines = (chapter_text or "").split("\n")
-    sec_idxs = [k for k, l in enumerate(lines) if _SECTION_RE.match(l.strip())]
-    if not sec_idxs:
-        body = "\n".join(lines).strip()
-        return [(chapter_title, None, body)] if body else []
-    triples = []
-    for si in range(len(sec_idxs)):
-        sstart = sec_idxs[si]
-        send = sec_idxs[si + 1] if si + 1 < len(sec_idxs) else len(lines)
-        sec_title = lines[sstart].strip()
-        sec_body = "\n".join(lines[sstart + 1:send]).strip()
-        triples.append((chapter_title, sec_title, sec_body))
-    triples = [(c, s, t) for (c, s, t) in triples if t.strip()]
-    return _drop_toc_like_triples(triples) if len(triples) >= 3 else triples
-
-
-def build_sections_manifest(book_dir):
-    """为 参考/<书名>/ 下所有 NNNN_*.txt 生成 _sections.json 清单（章→节层级）。
-
-    供爬虫下载路径使用：每章已落盘为独立 NNNN_*.txt，先在章内用 split_chapter 切节，
-    再产出与本地抽取同构的 [{chapter, section, title, file, body}, ...]。
-    - 节级条目带 body（该节正文切片），generate_from_ref 直接消费，避免整章正文重复挂到每个节下。
-    - 章级（无节，section=None）body=None，沿用整文件读取（小说：章即最小单位）。
-    - 漫画/空书无 txt 时返回 []（调用方据此跳过写 _sections.json，漫画走 generate_comic）。
-    """
-    from pathlib import Path
-    d = Path(book_dir)
-    txts = sorted(d.glob("[0-9][0-9][0-9][0-9]_*.txt"))
-    manifest = []
-    for fp in txts:
-        ch_name = fp.name[5:-4]
-        body = fp.read_text(encoding="utf-8")
-        triples = split_chapter(ch_name, body)
-        if not triples:
-            triples = [(ch_name, None, "")]  # 空章也保留条目，防漏章
-        for (chapter, section, text) in triples:
-            manifest.append({
-                "chapter": chapter,
-                "section": section,
-                "title": section or chapter,
-                "file": fp.name,
-                "body": text if section else None,
-            })
-    return manifest
 
 
 def _clean_triples(triples):

@@ -1,8 +1,8 @@
 # Book Learning Tutor（授业）—— 引擎依赖统一说明
 #
-# 本仓库的**唯一依赖真相源**是仓库根 `requirements.txt`（核心）+
-# `requirements-extra.txt`（在线书源 / 爬虫可选）。
-# 根文件已覆盖本目录全部运行所需（格式解析 + 课程化 + 爬虫轨道）。
+# 本仓库的**唯一依赖真相源**是仓库根 `requirements.txt`（核心）。
+# 根文件已覆盖本目录全部运行所需（格式解析 + 课程化）—— 本技能全程离线，
+# 不再需要任何 HTTP / 书源相关依赖（那部分已移入 book-finder 技能）。
 #
 # 安装一律使用根文件：
 #   python setup_env.py                              # 建 venv_slim + 装根 requirements.txt

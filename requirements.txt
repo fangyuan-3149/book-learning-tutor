@@ -8,17 +8,19 @@
 # 目标运行时：Python 3.13（3.11+ 亦可）。
 
 # ============================================================
-# 核心（必装）—— 本地「格式转换 + 课程化」全流程都依赖这些。
+# 核心（必装）—— 本地「格式转换 + 课程化」全流程依赖这些。
 # teach.py / pipeline all-local 的导入链会用到全部核心包，
 # 缺一都会在启动 CLI 时报 ImportError。
+#
+# 2026-10-26：搜索 / 在线下载已剥离为独立技能 book-finder，
+#   httpx / lxml / pycryptodome 随之移出核心（见 requirements-extra.txt）。
+#   此前它们只是因为 pipeline.py 顶层 import 了 source_engine 才被迫必装 ——
+#   一个只想把本地 PDF 课程化的用户不该装爬虫依赖。
 # ============================================================
 pymupdf==1.28.2          # PDF / EPUB / DJVU 解析主力（book_formats.extract）
-httpx==0.28.1            # 获取层 HTTP 客户端（fetcher；0.28 已移除 proxies=）
-beautifulsoup4==4.15.0   # HTML 解析（rules.py 选择器后端 + MOBI 解包后清洗）
-lxml==6.1.1              # bs4 的 XPath 解析后端
+beautifulsoup4==4.15.0   # HTML 解析（MOBI/EPUB 解包后清洗）
 python-docx==1.2.0       # DOCX 读取（标题/表格/元数据）
 mobi==0.4.1              # MOBI/AZW/AZW3 纯 Python 解包为 HTML（零膨胀，不捆绑 calibre）
-pycryptodome==3.23.0     # 书源内容解密（transforms；pipeline 导入链硬依赖，必须装）
 
 # ============================================================
 # 可选（不装也能跑核心流程；特定能力才需要）

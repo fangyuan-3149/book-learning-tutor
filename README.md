@@ -91,8 +91,8 @@ The assistant starts at lesson 1 and runs the "real teacher" rhythm — prep →
 
 ## Architecture iron rules (user-finalized, must hold)
 
-- **Pure-local parsing first**; the default path does **no web crawling / proxying**. Book-source crawling is an **optional capability that complements the local-file main path** (see the Acquisition pipeline section) — it only runs when you supply source rules and explicitly drive it, and you bear all responsibility (see `免责声明.md`).
-- **Zero external LLM key**: every "intelligent" step (writing source rules, teaching lesson by lesson) is done by the agent itself; tools only do deterministic work (fetch / replay-verify / persist / pipeline orchestration).
+- **Pure-local parsing only**; this skill does **no web crawling / proxying / HTTP at all**. Finding a book online is a separate skill (`book-finder`, user-supplied sources); this one only consumes `参考/<book>/`.
+- **Zero external LLM key**: every "intelligent" step (writing course structure, teaching lesson by lesson) is done by the agent itself; tools only do deterministic work (parse / split / persist / pipeline orchestration).
 - **The Skill is the only external interface**: other agents only need to know "how to invoke the Skill" + "output lands in `书库/<book>/`", and don't touch internal engine details.
 
 ## Core spec · book-library structure (user-finalized)
@@ -127,51 +127,34 @@ T4 Improvement·self-evolve  suggestion buffer → generality filter → stabili
 
 > Teaching outputs (prep / review cards / recitation / knowledge base / homework / teaching notes / learner profile) all live in **`storage/` inside the skill dir** (auto-adapts to install location, consistent across hosts), not polluting the book library; course-level progress is always `书库/<book>/progress.json` (atomically written back via `pipeline.py progress`). Detailed teaching principles / adaptive strategy / common pitfalls in the skill's `references/teaching_patterns.md`.
 
-## Acquisition pipeline (optional · user-supplied sources)
+## Finding a book → use the **book-finder** skill
 
-> The book-source acquisition below (search / download / import_source / discover) is an **optional capability** that complements the local-file main path (`teach.py` / `all-local`). It only runs when you provide source rules in `data/sources/` (the repo ships none) and explicitly drive it — it makes no unsolicited network calls. If you use it, comply with platform norms and bear all responsibility (see `免责声明.md`). Only use URLs you are authorized for, or that the site explicitly allows crawling; not supported for any unauthorized site (including those explicitly forbidding such tools).
+> Online search / download is **no longer part of this repo**. It moved to the standalone **book-finder** skill (the `Book Finder` repo beside this one): it searches the **user's own** book sources and writes raw book text into `参考/<book>/`. This repo then course-ifies `参考/<book>/` → `书库/<book>/`.
+>
+> Why split: the acquisition stack used to sit in `tools/acquire/`, which forced every local-only user to install `httpx` / `lxml` / `pycryptodome` just to course-ify a PDF — `python pipeline.py --help` would die on `import httpx`. Now this skill needs only `pymupdf` / `beautifulsoup4` / `python-docx` / `mobi`, and makes **no network call at all**.
 
-```
-Step 1 Search    load_sources → multi-source concurrent searchBook → aggregate results (agent-readable)
-Step 2 Download  pick a result → getContent chapter by chapter → 参考/<book>/
-Step 3 Course-ify  参考/<book>/ → content cleanup + heading tree → 书库/<book>/ nested course (direct read, no 预处理/)
-```
-
-**Source pool (local, user-owned):** the crawler reads source rules from a `data/sources/` directory **on your own machine** — the repo **ships none**, so clone-and-run starts empty. You plug in rules three ways: import from a subscription URL (`import_source.py`), let the agent derive a rule by reading a sample page (`discover.py`), or drop your own `active/` rules in. The pipeline then loads whatever you supplied.
-
-| Dir | Meaning |
-|---|---|
-| `active/` | pure-parse / JS-extract sources you supplied (pipeline default load) |
-| `archive/` | full backup you keep (incl. login / Java bridge / browser-needed sources, archived, not run) |
-| `discovered/` | new sources the agent derived by reading sample pages (discover.py output) |
-| `imported/` | sources you batch-imported and verified from your own subscription URLs (`verified.json`) |
 
 ## Toolchain (`tools/`)
 
 | Module | Responsibility | Layer |
 |---|---|---|
-| `acquire/fetcher.py` | HTTP layer (desktop UA, gbk/gb18030 heuristic decode, 1 QPS per domain) | engine internal |
-| `acquire/rules.py` | source-rule evaluation (CSS/XPath/JSONPath/Regex, incl. `@js:` routing, `_self_matches`) | engine internal |
-| `acquire/js_bridge.py` | resident Node evaluating `@js:`/`{{java.*}}` (lazy start + process singleton, no browser) | engine internal |
-| `acquire/transforms.py` | response-level decrypt hooks (7 AES/DES configs + md5/HMac, no browser) | engine internal |
-| `acquire/source_engine.py` | four actions (search/info/toc/content) + resume crawling + fault-tolerant persist | engine internal |
-| `acquire/pipeline.py` | pipeline orchestration (search/download/ingest/all-local/all; course-ify via course_gen direct read of 参考/) | engine internal |
-| `acquire/import_source.py` | **external entry**: subscription URL → adaptive unpack + survival pre-filter + per-source verify + dead-cause classify | Skill call |
-| `acquire/discover.py` | bare URL → agent reads sample page to derive source rule → replay-verify → write `discovered/` | Skill call |
+| `acquire/book_formats.py` | local format layer: PDF/EPUB/DJVU/MOBI/AZW/DOCX/FB2/CBZ → text triples + CBZ unpack + PDF figures | engine internal |
+| `acquire/pipeline.py` | local pipeline orchestration (`ingest` / `figures` / `inline` / `all-local` / `progress`) | Skill call |
 | `structure/course_gen.py` | 参考/<book>/ direct read → heading tree → 书库/<book>/ nested course + TOC guide + progress.json | Skill call |
+| `common/sanitize.py`, `common/io_robust.py` | shared filename cleaning + fault-tolerant writes | shared |
 
-**External command surface (Skill call)**: `import_source.py <url>`, `discover.py <url>`, `pipeline.py search/download/all-local/all <...>`, `course_gen.py 参考/<book>/ --book <book>`, `selftest.py` / `debug_source.py` / `rule_trace.py` (troubleshoot).
+**External command surface (Skill call)**: `pipeline.py ingest/figures/inline/all-local/progress <...>`, `course_gen.py 参考/<book>/ --book <book>`, `pipeline.py selftest`.
 
 ## Environment
 
-- Python 3.13 (or 3.11+); Node 22 only needed when using the "online source JS bridge" (optional, auto-skipped if absent)
-- Only pure-parse dependencies (httpx/bs4 etc.), **no browser / no Playwright / no external LLM key**
+- Python 3.13 (or 3.11+); **no Node, no browser, no network needed**
+- Pure local dependencies only (`pymupdf` / `beautifulsoup4` / `python-docx` / `mobi`, see `requirements.txt`)
 
 ## License & disclaimer
 
 - **Code license**: this repo (parse / course-ify engine, skill, scripts) is released under **MIT**, see [`LICENSE`](./LICENSE).
 - **Book content**: the repo **contains no book text**; the user must supply local book files and bear copyright and compliance responsibility; details in [`免责声明.md`](./免责声明.md).
-- **Crawler scripts**: `search` / `download` / `import_source` / `discover` are optional legacy capabilities, used by the user at their own risk, not in the external main path.
+- **No fetching code**: this repo ships no book sources and no crawler — see the `book-finder` skill for that (user-supplied sources, user's own responsibility).
 
 ## Contributing
 
@@ -229,8 +212,8 @@ python teach.py "<本地书路径>/你的书.pdf"
 
 ## 架构铁律（必须守住）
 
-- **纯本地解析优先**；对外技能**不做任何网络爬取 / 代理**。书源爬取属可选能力，是对本地文件主路径的补充；使用者若自行使用须自担责（见 `免责声明.md`）。
-- **零外部 LLM key**：所有「智能」步骤（写书源规则、逐课教学）由 agent 自身完成；工具只做确定性工作（抓取 / 回放校验 / 落盘 / 管道编排）。
+- **纯本地解析**；本技能**不做任何网络爬取 / 代理 / HTTP 调用**。在线找书是另一个技能（book-finder，自备书源）的事，本技能只消费 `参考/<书名>/`。
+- **零外部 LLM key**：所有「智能」步骤（组织课程结构、逐课教学）由 agent 自身完成；工具只做确定性工作（解析 / 切分 / 落盘 / 管道编排）。
 - **Skill 是唯一对外接口**：其他 agent 只需知道「如何调用 Skill」+「产物落在 `书库/<书名>/`」，不接触内部引擎细节。
 
 ## 核心规范 · 书库结构
@@ -265,51 +248,33 @@ T4 改进·自进化 建议缓冲 → 普适筛选 → 稳定冻结（**跨宿�
 
 > 教学产物（备课 / 复习卡 / 背诵 / 知识库 / 作业 / 教学笔记 / 习惯画像）全存于**技能目录内的 `storage/`**（随安装位置自动适配，跨宿主一致），不污染书库；课程级进度永远是 `书库/<书名>/progress.json`（用 `pipeline.py progress` 命令原子写回）。详细教学原则 / 自适应策略 / 常见陷阱见技能内 `references/teaching_patterns.md`。
 
-## 获取管道（可选 · 自备用源）
+## 找书 → 用 **book-finder** 技能
 
-> 下文的书源获取（search / download / import_source / discover）属于**可选能力**，是对本地文件主路径（上方 `teach.py` / `all-local`）的补充：只有当你在 `data/sources/` 提供了源规则（仓库不附带）并显式驱动时才运行，**不会主动发起任何网络调用**。使用者若自行使用，须自行遵守平台规范并承担一切责任（见 `免责声明.md`）。仅可使用你已获授权、或该站点明确允许抓取的网址；不支持对任何未授权站点（含明确禁止此类工具访问的站点）的爬取。
-
-```
-Step 1 搜索   load_sources → 多源并发 searchBook → 聚合结果（agent 可读）
-Step 2 下载   选一条结果 → 逐章 getContent → 参考/<书名>/
-Step 3 课程化  参考/<书名>/ → 正文净化 + 标题树 → 书库/<书名>/ 嵌套课程（直读，无 预处理/）
-```
-
-**书源池（本地、使用者自备）**：爬虫从**你本机的** `data/sources/` 目录读规则——仓库**不附带任何书源**，clone 下来默认是空的。填入规则有三种方式：从订阅 URL 批量导入（`import_source.py`）、让 agent 读样本页自动推导（`discover.py`）、或自己把规则放进 `active/`。之后 pipeline 才会加载你提供的源。
-
-| 目录 | 含义 |
-|---|---|
-| `active/` | 你提供的纯解析 / JS 提取源（pipeline 默认加载） |
-| `archive/` | 你保存的全量备份（含登录 / Java 桥 / 需浏览器源，归档不跑） |
-| `discovered/` | agent 读样本页推导出的新源（discover.py 产物） |
-| `imported/` | 你从自有订阅 URL 批量导入并校验的源（`verified.json`） |
+> 在线搜索 / 下载**已不在本仓库**。它搬到了独立的 **book-finder** 技能（同级的 `Book Finder` 仓库）：在**使用者自备**的书源里搜书，把原书正文写进 `参考/<书名>/`。本仓库再把 `参考/<书名>/` 课程化成 `书库/<书名>/`。
+>
+> 为什么拆：抓取栈原先窝在 `tools/acquire/` 里，导致只想本地课程化的用户被迫装 `httpx` / `lxml` / `pycryptodome` —— 实测 `python pipeline.py --help` 会直接崩在 `import httpx`。现在本技能只需 `pymupdf` / `beautifulsoup4` / `python-docx` / `mobi`，**全程零网络调用**。
 
 ## 工具链（`tools/`）
 
 | 模块 | 职责 | 层级 |
 |---|---|---|
-| `acquire/fetcher.py` | HTTP 层（桌面 UA、gbk/gb18030 启发式解码、每域 1 QPS） | 引擎内部 |
-| `acquire/rules.py` | 书源规则求值（CSS/XPath/JSONPath/Regex，含 `@js:` 路由、`_self_matches`） | 引擎内部 |
-| `acquire/js_bridge.py` | 常驻 Node 求值 `@js:`/`{{java.*}}`（懒启动 + 进程单例，无浏览器） | 引擎内部 |
-| `acquire/transforms.py` | 响应级解密钩子（7 种 AES/DES 配置 + md5/HMac 等，无浏览器） | 引擎内部 |
-| `acquire/source_engine.py` | 四大动作（search/info/toc/content）+ 断点续爬 + 容错落盘 | 引擎内部 |
-| `acquire/pipeline.py` | 管道编排（search/download/ingest/all-local/all；课程化由 course_gen 直读 参考/） | 引擎内部 |
-| `acquire/import_source.py` | **外化入口**：输入订阅 URL → 自适应拆包 + 存活预筛 + 逐源校验 + 死因分类 | Skill 调用 |
-| `acquire/discover.py` | 裸网址 → agent 读样本页推导书源规则 → 回放校验 → 落 `discovered/` | Skill 调用 |
+| `acquire/book_formats.py` | 本地格式层：PDF/EPUB/DJVU/MOBI/AZW/DOCX/FB2/CBZ → 文本三元组 + CBZ 解包 + PDF 插图 | 引擎内部 |
+| `acquire/pipeline.py` | 本地管道编排（`ingest` / `figures` / `inline` / `all-local` / `progress`） | Skill 调用 |
 | `structure/course_gen.py` | 参考/<书名>/ 直读 → 标题树 → 书库/<书名>/ 嵌套课程 + 目录导读 + progress.json | Skill 调用 |
+| `common/sanitize.py`、`common/io_robust.py` | 共用：文件名清洗 + 容错落盘 | 共用 |
 
-**对外命令面（Skill 调用）**：`import_source.py <url>`、`discover.py <url>`、`pipeline.py search/download/all-local/all <...>`、`course_gen.py 参考/<书名>/ --book <书名>`、`selftest.py` / `debug_source.py` / `rule_trace.py`（排错）。
+**对外命令面（Skill 调用）**：`pipeline.py ingest/figures/inline/all-local/progress <...>`、`course_gen.py 参考/<书名>/ --book <书名>`、`pipeline.py selftest`。
 
 ## 环境
 
-- Python 3.13（或 3.11+）；Node 22 仅在使用「在线书源 JS 桥」时才需要（可选，缺则自动跳过）
-- 仅纯解析依赖（httpx/bs4 等），**无浏览器 / 无 Playwright / 无外部 LLM key**
+- Python 3.13（或 3.11+）；**无需 Node、无需浏览器、无需联网**
+- 纯本地依赖（`pymupdf` / `beautifulsoup4` / `python-docx` / `mobi`，见 `requirements.txt`）
 
 ## 许可与免责
 
 - **代码许可**：本仓库（解析 / 课程化引擎、技能、脚本）以 **MIT 许可**发布，见 [`LICENSE`](./LICENSE)。
 - **书籍内容**：仓库**不包含任何书籍正文**，使用者须自行提供本地书文件，并自行承担版权与合规责任；详见 [`免责声明.md`](./免责声明.md)。
-- **爬虫脚本**：`search` / `download` / `import_source` / `discover` 为可选遗留能力，使用者自行使用、自担责，不在对外主路径内。
+- **不含抓取代码**：本仓库不附带任何书源、爬虫 —— 那部分在 `book-finder` 技能（自备书源，使用者自担责）。
 
 ## 共建与贡献
 
